@@ -1,6 +1,7 @@
 import os
 
 import pandas as pd
+import pydot
 
 from dataset import SingleProjectDataset
 
@@ -112,12 +113,6 @@ class Pipeline:
 
         print('开始训练...')
 
-
-print("start")
-# graphs = pydot.graph_from_dot_file("checkNodes3_a4459d_CA.dot")
-#
-# graph = graphs[0]
-# print("start")
 
 ppl = Pipeline('3:1:1', 'zookeeper', '../data/raw', '../data/processed')
 ppl.run()
