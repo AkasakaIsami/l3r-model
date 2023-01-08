@@ -2,6 +2,8 @@ import os
 
 import pandas as pd
 
+from dataset import SingleProjectDataset
+
 
 class Pipeline:
     """
@@ -12,21 +14,61 @@ class Pipeline:
 
     Args:
     ratio (str): 训练集、验证集、测试集比例
+    project (str): 指定作为目标数据的项目
     src_path (str): 读取数据的文件夹
     target_path (str): 读取数据的文件夹
     """
 
-    def __init__(self, ratio: str, src_path: str, target_path: str):
+    def __init__(self, ratio: str, project: str, src_path: str, target_path: str):
         self.embedding_size = None
         self.ratio = ratio
-        self.src_path = src_path
+        self.project = project
+        self.src_path = os.path.join(src_path, project)
         self.target_path = target_path
 
-    def preprocess_data(self):
-        return
-
     def split_data(self):
+        """
+        读取目标项目下的所有的函数目录 然后按比例进行切割
+
+        :return:
+        """
         ratios = [int(r) for r in self.ratio.split(':')]
+
+        all_methods = []
+        classes = os.listdir(self.src_path)
+        for clz in classes:
+            if clz == ".DS_Store":
+                continue
+
+            method_dir = os.path.join(self.src_path, clz)
+            methods = os.listdir(method_dir)
+            for method in methods:
+                if method == ".DS_Store":
+                    continue
+                all_methods.append((clz, method))
+
+        method_num = len(all_methods)
+
+        train_split = int(ratios[0] / sum(ratios) * method_num)
+        val_split = train_split + int(ratios[1] / sum(ratios) * method_num)
+
+        data = pd.Series(all_methods)
+        data.sample(frac=1, random_state=666)
+
+        train = data.loc[:train_split]
+        dev = data.loc[train_split:val_split]
+        test = data.loc[val_split:]
+
+        return train, dev, test
+
+    def make_dataset(self, train, dev, test):
+        train_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="train", methods=train)
+        validate_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="validate",
+                                                methods=dev)
+        test_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="test", methods=test)
+
+        print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
+        return test_dataset, validate_dataset, test_dataset
 
     def dictionary_and_embedding(self, project, embedding_size):
         """
@@ -56,25 +98,11 @@ class Pipeline:
         pass
 
     def run(self):
-        print('读取java模块处理完的数据...')
-
-        projects = os.listdir(self.src_path)
-
-        # all_classes, 存储项目名和对应的类列表
-        # e.g. {zookeeper : [zookeeper_AckRequestProcessor, ...]}
-        all_classes = {}
-
-        for project in projects:
-            project_dir = os.path.join(self.src_path, project)
-            classes = os.listdir(project_dir)
-
-            all_classes.update({project: classes})
-
-            for _class in classes:
-                class_dir = os.path.join(self.src_path, project, _class)
-                methods = os.listdir(class_dir)
-
         print('切分数据...')
+        train, dev, test = self.split_data()
+
+        print('读取java模块处理完的数据...')
+        self.make_dataset(train, dev, test)
 
         print('词嵌入训练...')
         self.dictionary_and_embedding("zookeeper", 128)
@@ -82,6 +110,14 @@ class Pipeline:
         print('更新AST的特征矩阵...')
         self.update_ast_node_feature("zookeeper")
 
+        print('开始训练...')
 
-ppl = Pipeline('3:1:1', '../data/originalData', '../data/dataset')
+
+print("start")
+# graphs = pydot.graph_from_dot_file("checkNodes3_a4459d_CA.dot")
+#
+# graph = graphs[0]
+# print("start")
+
+ppl = Pipeline('3:1:1', 'zookeeper', '../data/raw', '../data/processed')
 ppl.run()

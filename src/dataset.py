@@ -2,15 +2,16 @@ import os.path
 from typing import Optional, Callable, Union, List, Tuple
 
 import torch
-from torch_geometric.data import InMemoryDataset, Data
+from torch_geometric.data import InMemoryDataset
 
 
 class SingleProjectDataset(InMemoryDataset):
 
-    def __init__(self, root, transform=None, pre_transform=None, project=None, dataset_type="train"):
-        super(SingleProjectDataset, self).__init__(root, transform, pre_transform)
-
+    def __init__(self, root, transform=None, pre_transform=None, project=None, dataset_type="train", methods=None):
         self.project = project
+        self.methods = methods
+
+        super(SingleProjectDataset, self).__init__(root, transform, pre_transform)
 
         if dataset_type == "train":
             print(f"{dataset_type} using {self.processed_paths[0]} as dataset")
@@ -26,7 +27,14 @@ class SingleProjectDataset(InMemoryDataset):
 
     @property
     def raw_file_names(self) -> Union[str, List[str], Tuple]:
-        return [self.project]
+        paths = []
+        for item in self.methods.values:
+            clz = item[0]
+            method = item[1]
+            path = os.path.join(self.project, clz, method)
+            paths.append(path)
+
+        return paths
 
     @property
     def processed_file_names(self) -> Union[str, List[str], Tuple]:
@@ -39,7 +47,8 @@ class SingleProjectDataset(InMemoryDataset):
         pass
 
     def process(self):
-        raw_path = self.raw_paths[0]
+        for path in self.raw_paths:
+            files = os.listdir(path)
 
         train_datalist = []
 
@@ -47,13 +56,13 @@ class SingleProjectDataset(InMemoryDataset):
 
         test_datalist = []
 
-        data = Data(
-            x=None,
-            edge_index=None,
-            y=None,
-            statements = [[1,0],[0,1],[1,0]],
-            edges = [[[1,2,3],[2,3,4]],]
-        )
+        # data = Data(
+        #     x=None,
+        #     edge_index=None,
+        #     y=None,
+        #     statements=[[1, 0], [0, 1], [1, 0]],
+        #     edges=[[[1, 2, 3], [2, 3, 4]], ]
+        # )
 
         print("collating train data")
         data, slices = self.collate(train_datalist)
