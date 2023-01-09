@@ -30,6 +30,9 @@ class SingleProjectDataset(InMemoryDataset):
     @property
     def raw_file_names(self) -> Union[str, List[str], Tuple]:
         paths = []
+        corpus = os.path.join(self.project, self.project + '_corpus.txt')
+        paths.append(corpus)
+
         for item in self.methods.values:
             clz = item[0]
             method = item[1]
@@ -59,10 +62,11 @@ class SingleProjectDataset(InMemoryDataset):
             5 一个边矩阵列表，包含每个语句的AST边矩阵
         :return:
         """
-
         datalist = []
 
-        for path in self.raw_paths:
+        size = len(self.raw_paths)
+        for i in range(1, size):
+            path = self.raw_paths[i]
             # 每次遍历对单个函数进行处理 一个函数就是一条数据
             X = None
             cfg_edge_index = None
@@ -142,7 +146,7 @@ class SingleProjectDataset(InMemoryDataset):
         edge_1_cfg = []
         edge_0_dfg = []
         edge_1_dfg = []
-        torch.as_tensor(numpy.array([1, 2, 4, 3, 6, 3, 15]))
+
         for edge in edges:
             source = int(edge.get_source()[1:])
             destination = int(edge.get_destination()[1:])
@@ -173,8 +177,6 @@ class SingleProjectDataset(InMemoryDataset):
     def process_statement_dot(self, graph):
         nodes = graph.get_node_list()[:-1]
         node_num = len(nodes)
-
-
 
 
 class AllProjectsDataset(InMemoryDataset):

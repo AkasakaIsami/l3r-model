@@ -40,6 +40,8 @@ class Pipeline:
         for clz in classes:
             if clz == ".DS_Store":
                 continue
+            if clz == self.project + '_corpus.txt':
+                continue
 
             method_dir = os.path.join(self.src_path, clz)
             methods = os.listdir(method_dir)
@@ -71,45 +73,40 @@ class Pipeline:
         print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
         return test_dataset, validate_dataset, test_dataset
 
-    def dictionary_and_embedding(self, project, embedding_size):
+    def dictionary_and_embedding(self, project, train_data, embedding_size):
         """
         construct dictionary and train word embedding
 
         :param project: 输入要计算embedding的项目
+        :param train_data: 基于训练集构建语料库（懒得写了 暂时先用整个项目做语料库吧）
         :param embedding_size: 要训练的词嵌入大小
         """
         self.embedding_size = embedding_size
-        corpus_file_path = os.path.join(self.src_path, project, 'corpus.txt')
+        corpus_file_path = os.path.join(self.src_path, project + '_corpus.txt')
 
         from gensim.models import word2vec
 
         corpus = word2vec.LineSentence(corpus_file_path)
-        w2v = word2vec.Word2Vec(corpus, size=embedding_size, workers=16, sg=1, min_count=3)
+        w2v = word2vec.Word2Vec(corpus, vector_size=embedding_size, workers=16, sg=1, min_count=3)
 
-        save_path = os.path.join(self.target_path, project, "w2v_" + str(embedding_size) + ".model")
+        model_file_name = project + "_w2v_" + str(embedding_size) + ".model"
+
+        save_dir = os.path.join(self.target_path, project)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        save_path = os.path.join(save_dir, model_file_name)
         w2v.save(save_path)
-
-    def update_ast_node_feature(self, project):
-        """
-        将当前项目训练集中所有的特征都转换成word embedding
-
-        :param project: 待处理的项目
-        :return:
-        """
-        pass
 
     def run(self):
         print('切分数据...')
         train, dev, test = self.split_data()
 
-        print('读取java模块处理完的数据...')
-        self.make_dataset(train, dev, test)
-
         print('词嵌入训练...')
-        self.dictionary_and_embedding("zookeeper", 128)
+        self.dictionary_and_embedding("zookeeper", train, 128)
 
-        print('更新AST的特征矩阵...')
-        self.update_ast_node_feature("zookeeper")
+        print('制作数据集...')
+        self.make_dataset(train, dev, test)
 
         print('开始训练...')
 
