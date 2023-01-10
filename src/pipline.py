@@ -63,10 +63,13 @@ class Pipeline:
         return train, dev, test
 
     def make_dataset(self, train, dev, test):
-        train_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="train", methods=train)
+        train_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="train",
+                                             train_methods=train, dev_methods=dev, test_methods=test)
+        # 第一次获取的时候就创建好了 所以不用再传了
         validate_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="validate",
-                                                methods=dev)
-        test_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="test", methods=test)
+                                                train_methods=None, dev_methods=None, test_methods=None)
+        test_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="test",
+                                            train_methods=None, dev_methods=None, test_methods=None)
 
         print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
         return test_dataset, validate_dataset, test_dataset

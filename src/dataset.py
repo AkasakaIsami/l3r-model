@@ -11,44 +11,41 @@ from util import cut_word
 
 class SingleProjectDataset(InMemoryDataset):
 
-    def __init__(self, root, transform=None, pre_transform=None, project=None, dataset_type="train", methods=None):
+    def __init__(self, root, transform=None, pre_transform=None, project=None, dataset_type="train",
+                 train_methods=None, dev_methods=None, test_methods=None):
+        self.word2vec = None
+        self.embeddings = None
         self.project = project
-        self.methods = methods
+        self.train_methods = train_methods
+        self.dev_methods = dev_methods
+        self.test_methods = test_methods
 
         super(SingleProjectDataset, self).__init__(root, transform, pre_transform)
 
         if dataset_type == "train":
-            print(f"{dataset_type} using {self.processed_paths[0]} as dataset")
-            self.data, self.slices = torch.load(self.processed_paths[0])
-
-        elif dataset_type == "validate":
             print(f"{dataset_type} using {self.processed_paths[1]} as dataset")
             self.data, self.slices = torch.load(self.processed_paths[1])
 
-        elif dataset_type == "test":
+        elif dataset_type == "validate":
             print(f"{dataset_type} using {self.processed_paths[2]} as dataset")
             self.data, self.slices = torch.load(self.processed_paths[2])
 
+        elif dataset_type == "test":
+            print(f"{dataset_type} using {self.processed_paths[3]} as dataset")
+            self.data, self.slices = torch.load(self.processed_paths[3])
+
     @property
     def raw_file_names(self) -> Union[str, List[str], Tuple]:
-        paths = []
-        corpus = os.path.join(self.project, self.project + '_w2v_128.model')
-        paths.append(corpus)
-
-        for item in self.methods.values:
-            clz = item[0]
-            method = item[1]
-            path = os.path.join(self.project, clz, method)
-            paths.append(path)
+        paths = [self.project]
 
         return paths
 
     @property
     def processed_file_names(self) -> Union[str, List[str], Tuple]:
-        processed_train_path = os.path.join(self.project, "train", "train_.pt")
-        processed_dev_path = os.path.join(self.project, "dev", "dev_.pt")
-        processed_test_path = os.path.join(self.project, "test", "test_.pt")
-        return [processed_train_path, processed_dev_path, processed_test_path]
+        processed_train_path = os.path.join(self.project, "train_.pt")
+        processed_dev_path = os.path.join(self.project, "dev_.pt")
+        processed_test_path = os.path.join(self.project, "test_.pt")
+        return [self.project, processed_train_path, processed_dev_path, processed_test_path]
 
     def download(self):
         pass
@@ -64,65 +61,82 @@ class SingleProjectDataset(InMemoryDataset):
             5 一个边矩阵列表，包含每个语句的AST边矩阵
         :return:
         """
-        datalist = []
+        project_root = self.raw_paths[0]
 
-        size = len(self.raw_paths)
-        for i in range(1, size):
-            path = self.raw_paths[i]
-            # 每次遍历对单个函数进行处理 一个函数就是一条数据
-            X = None
-            cfg_edge_index = None
-            dfg_edge_index = None
-            Y = None
-            ast_x_list = []
-            ast_edge_index_list = []
+        # 先导入词嵌入矩阵
+        word2vec_path = os.path.join(project_root, self.project + '_w2v_128.model')
+        word2vec = Word2Vec.load(word2vec_path).wv
+        embeddings = np.zeros((word2vec.vectors.shape[0] + 1, word2vec.vectors.shape[1]), dtype="float32")
+        embeddings[:word2vec.vectors.shape[0]] = word2vec.vectors
+        self.word2vec = word2vec
+        self.embeddings = embeddings
 
-            files = os.listdir(path)
-            for file in files:
-                if file != 'statements':
-                    method_graph_file = os.path.join(path, file)
-                    method_graph = pydot.graph_from_dot_file(method_graph_file)
-                    method_graph = method_graph[0]
-                    x, cfg_edge_index, dfg_edge_index, y = self.process_method_dot(method_graph)
+        def build_datalist(methods):
+            datalist = []
+            for item in methods:
+                clz = item[0]
+                method = item[1]
+                path = os.path.join(project_root, clz, method)
+                X = None
+                cfg_edge_index = None
+                dfg_edge_index = None
+                Y = None
+                ast_x_list = []
+                ast_edge_index_list = []
 
-                else:
-                    statement_dir = os.path.join(path, 'statements')
-                    statement_files = os.listdir(statement_dir)
+                files = os.listdir(path)
+                for file in files:
+                    if file != 'statements':
+                        method_graph_file = os.path.join(path, file)
+                        method_graph = pydot.graph_from_dot_file(method_graph_file)
+                        method_graph = method_graph[0]
+                        x, cfg_edge_index, dfg_edge_index, y = self.process_method_dot(method_graph)
 
-                    for statement_file in statement_files:
-                        statement_ast = os.path.join(statement_dir, statement_file)
-                        statement_graph = pydot.graph_from_dot_file(statement_ast)
-                        statement_graph = statement_graph[0]
-                        ast_x, ast_edge_index = self.process_statement_dot(graph=statement_graph)
+                    else:
+                        statement_dir = os.path.join(path, 'statements')
+                        statement_files = os.listdir(statement_dir)
 
-                        ast_x_list.append(ast_x)
-                        ast_edge_index_list.append(ast_edge_index)
+                        for statement_file in statement_files:
+                            statement_ast = os.path.join(statement_dir, statement_file)
+                            statement_graph = pydot.graph_from_dot_file(statement_ast)
+                            statement_graph = statement_graph[0]
 
-            graph_dict = {
-                'x': X,
-                'edge_index': cfg_edge_index,
-                'y': Y,
-                'ast_x_list': ast_x_list,
-                'ast_edge_index_list': ast_edge_index_list,
-            }
+                            # 初始化节点特征的时候用了w2v 所以把矩阵导入
+                            ast_x, ast_edge_index = self.process_statement_dot(graph=statement_graph)
 
-            graph_data = Data.from_dict(graph_dict)
-            datalist.append(graph_data)
+                            ast_x_list.append(ast_x)
+                            ast_edge_index_list.append(ast_edge_index)
 
-        if self.dataset_type == "train":
-            print("collating train data")
-            data, slices = self.collate(datalist)
-            torch.save((data, slices), self.processed_paths[0])
+                graph_dict = {
+                    'x': X,
+                    'edge_index': cfg_edge_index,
+                    'y': Y,
+                    'ast_x_list': ast_x_list,
+                    'ast_edge_index_list': ast_edge_index_list,
+                }
 
-        elif self.dataset_type == "validate":
-            print("collating validate data")
-            data, slices = self.collate(datalist)
-            torch.save((data, slices), self.processed_paths[1])
+                graph_data = Data.from_dict(graph_dict)
+                datalist.append(graph_data)
+                return datalist
 
-        elif self.dataset_type == "test":
-            print("collating test data")
-            data, slices = self.collate(datalist)
-            torch.save((data, slices), self.processed_paths[2])
+        train_datalist = build_datalist(self.train_methods)
+        dev_datalist = build_datalist(self.dev_methods)
+        test_datalist = build_datalist(self.test_methods)
+
+        if not os.path.exists(self.processed_paths[0]):
+            os.makedirs(self.processed_paths[0])
+
+        print("collating train data")
+        data, slices = self.collate(train_datalist)
+        torch.save((data, slices), self.processed_paths[1])
+
+        print("collating validate data")
+        data, slices = self.collate(dev_datalist)
+        torch.save((data, slices), self.processed_paths[2])
+
+        print("collating test data")
+        data, slices = self.collate(test_datalist)
+        torch.save((data, slices), self.processed_paths[3])
 
     def process_method_dot(self, graph):
         nodes = graph.get_node_list()[:-1]
@@ -191,9 +205,9 @@ class SingleProjectDataset(InMemoryDataset):
             :param token:
             :return: 返回一个代表词嵌入的ndarray
             """
-            max_token = word2vec.vectors.shape[0]
-            index = [word2vec.key_to_index[token] if token in word2vec.key_to_index else max_token]
-            return embeddings[index]
+            max_token = self.word2vec.vectors.shape[0]
+            index = [self.word2vec.key_to_index[token] if token in self.word2vec.key_to_index else max_token]
+            return self.embeddings[index]
 
         def tokens_to_embedding(tokens):
             """
@@ -212,11 +226,6 @@ class SingleProjectDataset(InMemoryDataset):
             count = len(tokens)
             result = result / count
             return result
-
-        word2vec_path = self.raw_paths[0]
-        word2vec = Word2Vec.load(word2vec_path).wv
-        embeddings = np.zeros((word2vec.vectors.shape[0] + 1, word2vec.vectors.shape[1]), dtype="float32")
-        embeddings[:word2vec.vectors.shape[0]] = word2vec.vectors
 
         x = []
         nodes = graph.get_node_list()[:-1]
