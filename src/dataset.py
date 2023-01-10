@@ -1,10 +1,12 @@
 import os.path
 from typing import Optional, Callable, Union, List, Tuple
-
-import numpy
+import numpy as np
 import pydot as pydot
 import torch
+from gensim.models import Word2Vec
 from torch_geometric.data import InMemoryDataset, Data
+
+from util import cut_word
 
 
 class SingleProjectDataset(InMemoryDataset):
@@ -30,7 +32,7 @@ class SingleProjectDataset(InMemoryDataset):
     @property
     def raw_file_names(self) -> Union[str, List[str], Tuple]:
         paths = []
-        corpus = os.path.join(self.project, self.project + '_corpus.txt')
+        corpus = os.path.join(self.project, self.project + '_w2v_128.model')
         paths.append(corpus)
 
         for item in self.methods.values:
@@ -175,8 +177,82 @@ class SingleProjectDataset(InMemoryDataset):
         return x, cfg_edge_index, dfg_edge_index, y
 
     def process_statement_dot(self, graph):
+        """
+        这个函数返回ST-AST的特征矩阵和邻接矩阵
+        特征矩阵需要根据语料库构建……
+
+        :param graph: ST-AST
+        :return: 特征矩阵和邻接矩阵
+        """
+
+        def word_to_vec(token):
+            """
+            词转词嵌入
+            :param token:
+            :return: 返回一个代表词嵌入的ndarray
+            """
+            max_token = word2vec.vectors.shape[0]
+            index = [word2vec.key_to_index[token] if token in word2vec.key_to_index else max_token]
+            return embeddings[index]
+
+        def tokens_to_embedding(tokens):
+            """
+            对于多token组合的节点 可以有多种加权求和方式
+            这里简单的求平均先
+
+            :param tokens:节点的token序列
+            :return: 最终的节点向量
+            """
+            result = torch.zeros([1, 128], dtype=torch.float)
+
+            for token in tokens:
+                token_embedding = torch.from_numpy(word_to_vec(token))
+                result = result + token_embedding
+
+            count = len(tokens)
+            result = result / count
+            return result
+
+        word2vec_path = self.raw_paths[0]
+        word2vec = Word2Vec.load(word2vec_path).wv
+        embeddings = np.zeros((word2vec.vectors.shape[0] + 1, word2vec.vectors.shape[1]), dtype="float32")
+        embeddings[:word2vec.vectors.shape[0]] = word2vec.vectors
+
+        x = []
         nodes = graph.get_node_list()[:-1]
-        node_num = len(nodes)
+
+        # 没节点就返回空的
+        if len(nodes) == 0:
+            return [], []
+
+        for node in nodes:
+            node_str = node.get_attributes()['label']
+            # token 可能是多种形势，要先切分
+            tokens = cut_word(node_str)
+            # 多token可以考虑不同的合并方式
+            node_embedding = tokens_to_embedding(tokens)
+            x.append(node_embedding)
+
+        x = torch.cat(x)
+
+        edges = graph.get_edge_list()
+        edge_0 = []
+        edge_1 = []
+
+        for edge in edges:
+            source = int(edge.get_source()[1:])
+            destination = int(edge.get_destination()[1:])
+            edge_0.append(source)
+            edge_1.append(destination)
+
+        edge_0 = torch.as_tensor(edge_0)
+        edge_1 = torch.as_tensor(edge_1)
+        edge_0 = edge_0.reshape(1, len(edge_0))
+        edge_1 = edge_1.reshape(1, len(edge_1))
+
+        edge_index = torch.cat([edge_0, edge_1], dim=0)
+
+        return x, edge_index
 
 
 class AllProjectsDataset(InMemoryDataset):

@@ -1,8 +1,6 @@
 import os
 
 import pandas as pd
-import pydot
-
 from dataset import SingleProjectDataset
 
 
@@ -40,7 +38,7 @@ class Pipeline:
         for clz in classes:
             if clz == ".DS_Store":
                 continue
-            if clz == self.project + '_corpus.txt':
+            if clz == self.project + '_corpus.txt' or clz == self.project + '_w2v_128.model':
                 continue
 
             method_dir = os.path.join(self.src_path, clz)
@@ -89,14 +87,11 @@ class Pipeline:
         corpus = word2vec.LineSentence(corpus_file_path)
         w2v = word2vec.Word2Vec(corpus, vector_size=embedding_size, workers=16, sg=1, min_count=3)
 
-        model_file_name = project + "_w2v_" + str(embedding_size) + ".model"
+        model_file_name = project + "_w2v_" + str(embedding_size) + '.model'
 
-        save_dir = os.path.join(self.target_path, project)
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-
-        save_path = os.path.join(save_dir, model_file_name)
-        w2v.save(save_path)
+        save_path = os.path.join(self.src_path, model_file_name)
+        if not os.path.exists(save_path):
+            w2v.save(save_path)
 
     def run(self):
         print('切分数据...')
