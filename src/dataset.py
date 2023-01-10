@@ -1,4 +1,5 @@
 import os.path
+import pickle
 from typing import Optional, Callable, Union, List, Tuple
 import numpy as np
 import pydot as pydot
@@ -24,15 +25,21 @@ class SingleProjectDataset(InMemoryDataset):
 
         if dataset_type == "train":
             print(f"{dataset_type} using {self.processed_paths[1]} as dataset")
-            self.data, self.slices = torch.load(self.processed_paths[1])
+            train_file = open(self.processed_paths[1], 'rb')
+            self.data = pickle.load(train_file)
+            # self.data, self.slices = torch.load(self.processed_paths[1])
 
         elif dataset_type == "validate":
             print(f"{dataset_type} using {self.processed_paths[2]} as dataset")
-            self.data, self.slices = torch.load(self.processed_paths[2])
+            dev_file = open(self.processed_paths[2], 'rb')
+            self.data = pickle.load(dev_file)
+            # self.data, self.slices = torch.load(self.processed_paths[2])
 
         elif dataset_type == "test":
             print(f"{dataset_type} using {self.processed_paths[3]} as dataset")
-            self.data, self.slices = torch.load(self.processed_paths[3])
+            test_file = open(self.processed_paths[3], 'rb')
+            self.data = pickle.load(test_file)
+            # self.data, self.slices = torch.load(self.processed_paths[3])
 
     @property
     def raw_file_names(self) -> Union[str, List[str], Tuple]:
@@ -42,9 +49,9 @@ class SingleProjectDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self) -> Union[str, List[str], Tuple]:
-        processed_train_path = os.path.join(self.project, "train_.pt")
-        processed_dev_path = os.path.join(self.project, "dev_.pt")
-        processed_test_path = os.path.join(self.project, "test_.pt")
+        processed_train_path = os.path.join(self.project, "train_.pkl")
+        processed_dev_path = os.path.join(self.project, "dev_.pkl")
+        processed_test_path = os.path.join(self.project, "test_.pkl")
         return [self.project, processed_train_path, processed_dev_path, processed_test_path]
 
     def download(self):
@@ -77,12 +84,8 @@ class SingleProjectDataset(InMemoryDataset):
                 clz = item[0]
                 method = item[1]
                 path = os.path.join(project_root, clz, method)
-                X = None
-                cfg_edge_index = None
-                dfg_edge_index = None
-                Y = None
-                ast_x_list = []
-                ast_edge_index_list = []
+
+                graph_dict = {}
 
                 files = os.listdir(path)
                 for file in files:
@@ -91,33 +94,36 @@ class SingleProjectDataset(InMemoryDataset):
                         method_graph = pydot.graph_from_dot_file(method_graph_file)
                         method_graph = method_graph[0]
                         x, cfg_edge_index, dfg_edge_index, y = self.process_method_dot(method_graph)
-
+                        graph_dict['x'] = x
+                        graph_dict['edge_index'] = cfg_edge_index
+                        graph_dict['y'] = y
                     else:
                         statement_dir = os.path.join(path, 'statements')
                         statement_files = os.listdir(statement_dir)
 
-                        for statement_file in statement_files:
+                        n = len(statement_files)
+
+                        ast_x_list = []
+                        ast_edge_index_list = []
+
+                        for i in range(n):
+                            statement_file = statement_files[i]
+
                             statement_ast = os.path.join(statement_dir, statement_file)
                             statement_graph = pydot.graph_from_dot_file(statement_ast)
                             statement_graph = statement_graph[0]
 
                             # 初始化节点特征的时候用了w2v 所以把矩阵导入
                             ast_x, ast_edge_index = self.process_statement_dot(graph=statement_graph)
-
                             ast_x_list.append(ast_x)
                             ast_edge_index_list.append(ast_edge_index)
 
-                graph_dict = {
-                    'x': X,
-                    'edge_index': cfg_edge_index,
-                    'y': Y,
-                    'ast_x_list': ast_x_list,
-                    'ast_edge_index_list': ast_edge_index_list,
-                }
+                        graph_dict["ast_x_list"] = ast_x_list
+                        graph_dict["ast_edge_index_list"] = ast_edge_index_list
 
                 graph_data = Data.from_dict(graph_dict)
                 datalist.append(graph_data)
-                return datalist
+            return datalist
 
         train_datalist = build_datalist(self.train_methods)
         dev_datalist = build_datalist(self.dev_methods)
@@ -126,17 +132,24 @@ class SingleProjectDataset(InMemoryDataset):
         if not os.path.exists(self.processed_paths[0]):
             os.makedirs(self.processed_paths[0])
 
+        # 2023.01.11 2:46 am 感谢维饶帮我debug到凌晨三点
+        # 特写此注释 以表感谢
+        # 等你回上海 我请你吃生蚝鸡煲
+        # 没有阴阳怪气！！
         print("collating train data")
-        data, slices = self.collate(train_datalist)
-        torch.save((data, slices), self.processed_paths[1])
+        train_file = open(self.processed_paths[1], 'wb')
+        pickle.dump(train_datalist, train_file)
+        train_file.close()
 
         print("collating validate data")
-        data, slices = self.collate(dev_datalist)
-        torch.save((data, slices), self.processed_paths[2])
+        dev_file = open(self.processed_paths[2], 'wb')
+        pickle.dump(dev_datalist, dev_file)
+        dev_file.close()
 
         print("collating test data")
-        data, slices = self.collate(test_datalist)
-        torch.save((data, slices), self.processed_paths[3])
+        test_file = open(self.processed_paths[3], 'wb')
+        pickle.dump(test_datalist, test_file)
+        test_file.close()
 
     def process_method_dot(self, graph):
         nodes = graph.get_node_list()[:-1]
@@ -232,7 +245,7 @@ class SingleProjectDataset(InMemoryDataset):
 
         # 没节点就返回空的
         if len(nodes) == 0:
-            return [], []
+            return torch.zeros([0, 128]), torch.zeros([2, 0])
 
         for node in nodes:
             node_str = node.get_attributes()['label']

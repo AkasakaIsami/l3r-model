@@ -64,15 +64,15 @@ class Pipeline:
 
     def make_dataset(self, train, dev, test):
         train_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="train",
-                                             train_methods=train, dev_methods=dev, test_methods=test)
+                                             train_methods=train, dev_methods=dev, test_methods=test).data
         # 第一次获取的时候就创建好了 所以不用再传了
         validate_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="validate",
-                                                train_methods=None, dev_methods=None, test_methods=None)
+                                                train_methods=None, dev_methods=None, test_methods=None).data
         test_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="test",
-                                            train_methods=None, dev_methods=None, test_methods=None)
+                                            train_methods=None, dev_methods=None, test_methods=None).data
 
         print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
-        return test_dataset, validate_dataset, test_dataset
+        return train_dataset, validate_dataset, test_dataset
 
     def dictionary_and_embedding(self, project, train_data, embedding_size):
         """
@@ -97,6 +97,8 @@ class Pipeline:
             w2v.save(save_path)
 
     def run(self):
+        print(f'开始数据预处理（目标项目为{self.project}）...')
+
         print('切分数据...')
         train, dev, test = self.split_data()
 
@@ -104,9 +106,10 @@ class Pipeline:
         self.dictionary_and_embedding("zookeeper", train, 128)
 
         print('制作数据集...')
-        self.make_dataset(train, dev, test)
+        train_dataset, validate_dataset, test_dataset = self.make_dataset(train, dev, test)
 
         print('开始训练...')
+        data = train_dataset[0]
 
 
 ppl = Pipeline('3:1:1', 'zookeeper', '../data/raw', '../data/processed')
