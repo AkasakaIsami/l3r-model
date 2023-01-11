@@ -1,9 +1,6 @@
 import torch
-from torch import nn
-from torch.nn import ModuleList, Linear, Tanh
-from torch_geometric.nn import GATConv, MLP
-from torch_geometric.nn import BatchNorm
-import torch.nn.functional as F
+import torch.nn as nn
+from torch_geometric.nn import GATConv, BatchNorm, MLP, TopKPooling
 
 
 class StatementClassfier(nn.Module):
@@ -22,7 +19,7 @@ class StatementClassfier(nn.Module):
         self.th = torch.cuda if use_gpu else torch
 
         # 网络结构的定义
-        self.encoder = StatementEncoder()
+        self.encoder = StatementEncoder(self.embedding_dim, self.hidden_dim, self.encode_dim, self.gpu)
 
         self.gat0 = nn.Sequential(
 
@@ -84,13 +81,42 @@ class StatementClassfier(nn.Module):
                 statement_vec = self.encoder(ast_x, ast_edge_index)
                 for k in range(self.encode_dim):
                     data[i]['x'][j][k] = statement_vec[k]
-
-        pass
+        # 节点初始化特征学习完以后 开始外层GNN
 
 
 class StatementEncoder(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, embedding_dim, hidden_dim, encode_dim, use_gpu, dropout) -> None:
         super().__init__()
+        self.embedding_dim = embedding_dim
+        self.hidden_dim = hidden_dim
+        self.encode_dim = encode_dim
+        self.use_gpu = use_gpu
+        self.dropout = dropout
+
+        # 网络结构定义
+        # 还是用GNN
+        # 用两层GAT + TopKPooling/MaxPooling
+        self.layer_0 = nn.Sequential(
+            GATConv(in_channels=self.embedding_dim, out_channels=self.embedding_dim, heads=3,
+                    dropout=self.dropout),
+            nn.ReLU(),
+            BatchNorm(self.embedding_dim * 3)
+        )
+
+        self.layer_1 = nn.Sequential(
+            GATConv(in_channels=self.embedding_dim * 3, out_channels=self.embedding_dim, heads=1,
+                    dropout=self.dropout),
+            nn.ReLU(),
+            BatchNorm(self.embedding_dim)
+        )
+
+        self.pooling = nn.Sequential(
+            TopKPooling(),
+            nn.ReLU()
+        )
+
+        self.mlp = MLP(in_channels=self.embedding_dim, hidden_channels=self.hidden_dim,
+                       out_channels=self.encode_dim, num_layers=2)
 
     def forward(self, x, edge_index):
         """
@@ -102,5 +128,8 @@ class StatementEncoder(nn.Module):
         :param batch_size:
         :return:
         """
-
-        pass
+        h = self.layer_0(x, edge_index)
+        h = self.layer_1(h, edge_index)
+        h = self.pooling(h)
+        out = self.mlp(h)
+        return out
