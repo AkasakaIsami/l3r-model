@@ -2,6 +2,7 @@ import os
 
 import pandas as pd
 from dataset import SingleProjectDataset
+from train import train
 
 
 class Pipeline:
@@ -64,12 +65,12 @@ class Pipeline:
 
     def make_dataset(self, train, dev, test):
         train_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="train",
-                                             train_methods=train, dev_methods=dev, test_methods=test).data
+                                             train_methods=train, dev_methods=dev, test_methods=test)
         # 第一次获取的时候就创建好了 所以不用再传了
         validate_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="validate",
-                                                train_methods=None, dev_methods=None, test_methods=None).data
+                                                train_methods=None, dev_methods=None, test_methods=None)
         test_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="test",
-                                            train_methods=None, dev_methods=None, test_methods=None).data
+                                            train_methods=None, dev_methods=None, test_methods=None)
 
         print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
         return train_dataset, validate_dataset, test_dataset
@@ -100,16 +101,16 @@ class Pipeline:
         print(f'开始数据预处理（目标项目为{self.project}）...')
 
         print('切分数据...')
-        train, dev, test = self.split_data()
+        train_src, dev_src, test_src = self.split_data()
 
         print('词嵌入训练...')
-        self.dictionary_and_embedding("zookeeper", train, 128)
+        self.dictionary_and_embedding("zookeeper", train_src, 128)
 
         print('制作数据集...')
-        train_dataset, validate_dataset, test_dataset = self.make_dataset(train, dev, test)
+        train_dataset, validate_dataset, test_dataset = self.make_dataset(train_src, dev_src, test_src)
 
         print('开始训练...')
-        data = train_dataset[0]
+        train(train_dataset, validate_dataset)
 
 
 ppl = Pipeline('3:1:1', 'zookeeper', '../data/raw', '../data/processed')

@@ -25,21 +25,16 @@ class SingleProjectDataset(InMemoryDataset):
 
         if dataset_type == "train":
             print(f"{dataset_type} using {self.processed_paths[1]} as dataset")
-            train_file = open(self.processed_paths[1], 'rb')
-            self.data = pickle.load(train_file)
-            # self.data, self.slices = torch.load(self.processed_paths[1])
+            self.data, self.slices = torch.load(self.processed_paths[1])
+
 
         elif dataset_type == "validate":
             print(f"{dataset_type} using {self.processed_paths[2]} as dataset")
-            dev_file = open(self.processed_paths[2], 'rb')
-            self.data = pickle.load(dev_file)
-            # self.data, self.slices = torch.load(self.processed_paths[2])
+            self.data, self.slices = torch.load(self.processed_paths[2])
 
         elif dataset_type == "test":
             print(f"{dataset_type} using {self.processed_paths[3]} as dataset")
-            test_file = open(self.processed_paths[3], 'rb')
-            self.data = pickle.load(test_file)
-            # self.data, self.slices = torch.load(self.processed_paths[3])
+            self.data, self.slices = torch.load(self.processed_paths[3])
 
     @property
     def raw_file_names(self) -> Union[str, List[str], Tuple]:
@@ -49,9 +44,9 @@ class SingleProjectDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self) -> Union[str, List[str], Tuple]:
-        processed_train_path = os.path.join(self.project, "train_.pkl")
-        processed_dev_path = os.path.join(self.project, "dev_.pkl")
-        processed_test_path = os.path.join(self.project, "test_.pkl")
+        processed_train_path = os.path.join(self.project, "train_.pt")
+        processed_dev_path = os.path.join(self.project, "dev_.pt")
+        processed_test_path = os.path.join(self.project, "test_.pt")
         return [self.project, processed_train_path, processed_dev_path, processed_test_path]
 
     def download(self):
@@ -99,6 +94,7 @@ class SingleProjectDataset(InMemoryDataset):
                         graph_dict['y'] = y
                     else:
                         statement_dir = os.path.join(path, 'statements')
+                        # TODO 排序
                         statement_files = os.listdir(statement_dir)
 
                         n = len(statement_files)
@@ -118,8 +114,22 @@ class SingleProjectDataset(InMemoryDataset):
                             ast_x_list.append(ast_x)
                             ast_edge_index_list.append(ast_edge_index)
 
-                        graph_dict["ast_x_list"] = ast_x_list
-                        graph_dict["ast_edge_index_list"] = ast_edge_index_list
+                        def list_to_matrix(ast_x_list, ast_edge_index_list):
+                            n = []
+                            for ast_x in ast_x_list:
+                                temp_n = len(ast_x)
+                                n.append([temp_n])
+                            n = torch.tensor(n)
+
+                            ast_x_matrix = torch.cat(ast_x_list, 0)
+                            ast_edge_index_matrix = torch.cat(ast_edge_index_list, 1)
+
+                            return n, ast_x_matrix, ast_edge_index_matrix
+
+                        n, ast_x_matrix, ast_edge_index_matrix = list_to_matrix(ast_x_list, ast_edge_index_list)
+                        graph_dict['n'] = n
+                        graph_dict['ast_x_matrix'] = ast_x_matrix
+                        graph_dict['ast_edge_index_matrix'] = ast_edge_index_matrix
 
                 graph_data = Data.from_dict(graph_dict)
                 datalist.append(graph_data)
@@ -137,19 +147,16 @@ class SingleProjectDataset(InMemoryDataset):
         # 等你回上海 我请你吃生蚝鸡煲
         # 没有阴阳怪气！！
         print("collating train data")
-        train_file = open(self.processed_paths[1], 'wb')
-        pickle.dump(train_datalist, train_file)
-        train_file.close()
+        data, slices = self.collate(train_datalist)
+        torch.save((data, slices), self.processed_paths[1])
 
         print("collating validate data")
-        dev_file = open(self.processed_paths[2], 'wb')
-        pickle.dump(dev_datalist, dev_file)
-        dev_file.close()
+        data, slices = self.collate(dev_datalist)
+        torch.save((data, slices), self.processed_paths[2])
 
         print("collating test data")
-        test_file = open(self.processed_paths[3], 'wb')
-        pickle.dump(test_datalist, test_file)
-        test_file.close()
+        data, slices = self.collate(test_datalist)
+        torch.save((data, slices), self.processed_paths[3])
 
     def process_method_dot(self, graph):
         nodes = graph.get_node_list()[:-1]
