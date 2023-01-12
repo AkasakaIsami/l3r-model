@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from torch_geometric.nn import GATConv, BatchNorm, MLP, TopKPooling
+from torch_geometric.nn import Sequential, GATConv, BatchNorm, MLP, TopKPooling, global_mean_pool
+import torch.nn.functional as F
 
 
 class StatementClassfier(nn.Module):
@@ -19,7 +20,7 @@ class StatementClassfier(nn.Module):
         self.th = torch.cuda if use_gpu else torch
 
         # 网络结构的定义
-        self.encoder = StatementEncoder(self.embedding_dim, self.hidden_dim, self.encode_dim, self.gpu)
+        self.encoder = StatementEncoder(self.embedding_dim, self.hidden_dim, self.encode_dim, self.gpu, self.dropout)
 
         self.gat0 = nn.Sequential(
 
@@ -65,7 +66,8 @@ class StatementClassfier(nn.Module):
 
             return ast_x_list, ast_edge_index_list
 
-        for i in range(batch_size):
+        size = len(data)
+        for i in range(size):
             # 一条data 里面有x、edge_index、y，以及多个ast树的特征矩阵和邻接矩阵
             n = data[i]["n"]
             ast_x_matrix = data[i]["ast_x_matrix"]
@@ -78,10 +80,12 @@ class StatementClassfier(nn.Module):
             for j in range(size):
                 ast_x = ast_x_list[j]
                 ast_edge_index = ast_edge_index_list[j]
+
                 statement_vec = self.encoder(ast_x, ast_edge_index)
                 for k in range(self.encode_dim):
-                    data[i]['x'][j][k] = statement_vec[k]
+                    data[i]['x'][j][k] = statement_vec[0][k]
         # 节点初始化特征学习完以后 开始外层GNN
+        print('hi')
 
 
 class StatementEncoder(nn.Module):
@@ -96,27 +100,23 @@ class StatementEncoder(nn.Module):
         # 网络结构定义
         # 还是用GNN
         # 用两层GAT + TopKPooling/MaxPooling
-        self.layer_0 = nn.Sequential(
-            GATConv(in_channels=self.embedding_dim, out_channels=self.embedding_dim, heads=3,
-                    dropout=self.dropout),
+
+        self.layer_0 = Sequential('x, edge_index', [
+            (GATConv(in_channels=self.embedding_dim, out_channels=self.embedding_dim, heads=3,
+                     dropout=self.dropout), 'x, edge_index -> x'),
             nn.ReLU(),
             BatchNorm(self.embedding_dim * 3)
-        )
-
-        self.layer_1 = nn.Sequential(
-            GATConv(in_channels=self.embedding_dim * 3, out_channels=self.embedding_dim, heads=1,
-                    dropout=self.dropout),
+        ])
+        self.layer_1 = Sequential('x, edge_index', [
+            (GATConv(in_channels=self.embedding_dim * 3, out_channels=self.embedding_dim, heads=1,
+                     dropout=self.dropout), 'x, edge_index -> x'),
             nn.ReLU(),
             BatchNorm(self.embedding_dim)
-        )
+        ])
 
-        self.pooling = nn.Sequential(
-            TopKPooling(),
-            nn.ReLU()
-        )
-
-        self.mlp = MLP(in_channels=self.embedding_dim, hidden_channels=self.hidden_dim,
-                       out_channels=self.encode_dim, num_layers=2)
+        self.mlp = nn.Sequential(nn.Linear(self.embedding_dim, self.hidden_dim),
+                                 nn.Tanh(),
+                                 nn.Linear(self.hidden_dim, self.encode_dim))
 
     def forward(self, x, edge_index):
         """
@@ -128,8 +128,20 @@ class StatementEncoder(nn.Module):
         :param batch_size:
         :return:
         """
-        h = self.layer_0(x, edge_index)
-        h = self.layer_1(h, edge_index)
-        h = self.pooling(h)
-        out = self.mlp(h)
+
+        # 考虑到有的ast树只有一个节点没有边
+        # 这样的ast直接把节点的嵌入返回即可
+        size = len(x)
+        if size > 1:
+            batch = torch.zeros(size, )
+            batch = torch.tensor(batch, dtype=torch.int64)
+
+            h = self.layer_0(x, edge_index)
+            h = self.layer_1(h, edge_index)
+            h = global_mean_pool(h, batch)
+            h = h.relu()
+            out = self.mlp(h)
+        else:
+            out = self.mlp(x)
+
         return out

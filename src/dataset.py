@@ -1,3 +1,4 @@
+import functools
 import os.path
 import pickle
 from typing import Optional, Callable, Union, List, Tuple
@@ -94,8 +95,18 @@ class SingleProjectDataset(InMemoryDataset):
                         graph_dict['y'] = y
                     else:
                         statement_dir = os.path.join(path, 'statements')
-                        # TODO 排序
+
+                        def filename_cmp(x, y):
+                            index_x = int(x[1:x.find('_')])
+                            index_y = int(y[1: y.find('_')])
+
+                            if index_x < index_y:
+                                return -1
+                            else:
+                                return 1
+
                         statement_files = os.listdir(statement_dir)
+                        statement_files.sort(key=functools.cmp_to_key(filename_cmp))
 
                         n = len(statement_files)
 
@@ -122,7 +133,7 @@ class SingleProjectDataset(InMemoryDataset):
                             n = torch.tensor(n)
 
                             ast_x_matrix = torch.cat(ast_x_list, 0)
-                            ast_edge_index_matrix = torch.cat(ast_edge_index_list, 1)
+                            ast_edge_index_matrix = torch.cat(ast_edge_index_list, 1).int()
 
                             return n, ast_x_matrix, ast_edge_index_matrix
 
@@ -250,9 +261,9 @@ class SingleProjectDataset(InMemoryDataset):
         x = []
         nodes = graph.get_node_list()[:-1]
 
-        # 没节点就返回空的
+        # 没节点就一个随机的
         if len(nodes) == 0:
-            return torch.zeros([0, 128]), torch.zeros([2, 0])
+            return torch.zeros([1, 128]), torch.zeros([2, 0])
 
         for node in nodes:
             node_str = node.get_attributes()['label']
@@ -274,8 +285,8 @@ class SingleProjectDataset(InMemoryDataset):
             edge_0.append(source)
             edge_1.append(destination)
 
-        edge_0 = torch.as_tensor(edge_0)
-        edge_1 = torch.as_tensor(edge_1)
+        edge_0 = torch.as_tensor(edge_0, dtype=torch.int)
+        edge_1 = torch.as_tensor(edge_1, dtype=torch.int)
         edge_0 = edge_0.reshape(1, len(edge_0))
         edge_1 = edge_1.reshape(1, len(edge_1))
 
