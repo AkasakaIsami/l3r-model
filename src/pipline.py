@@ -2,6 +2,7 @@ import os
 
 import pandas as pd
 from dataset import SingleProjectDataset
+from test import test
 from train import train
 
 
@@ -110,7 +111,10 @@ class Pipeline:
         train_dataset, validate_dataset, test_dataset = self.make_dataset(train_src, dev_src, test_src)
 
         print('开始训练...')
-        train(train_dataset, validate_dataset)
+        model = train(train_dataset, validate_dataset, "../data/model")
+
+        print('开始测试...')
+        test(model, test_dataset)
 
 
 ppl = Pipeline('3:1:1', 'zookeeper', '../data/raw', '../data/processed')

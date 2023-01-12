@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-from torch_geometric.nn import Sequential, GATConv, BatchNorm, MLP, TopKPooling, global_mean_pool
-import torch.nn.functional as F
+from torch_geometric.nn import Sequential, GATConv, BatchNorm, MLP, TopKPooling, global_mean_pool, RGCNConv
 
 
 class StatementClassfier(nn.Module):
@@ -20,33 +19,29 @@ class StatementClassfier(nn.Module):
         self.th = torch.cuda if use_gpu else torch
 
         # 网络结构的定义
+        # 就用RGCN吧 两层RGCN/RGAT都可以试试看
         self.encoder = StatementEncoder(self.embedding_dim, self.hidden_dim, self.encode_dim, self.gpu, self.dropout)
+        self.layer_0 = Sequential('x, edge_index, edge_type', [
+            (RGCNConv(in_channels=self.encode_dim, out_channels=self.hidden_dim, num_relations=2, is_sorted=True),
+             'x, edge_index,edge_type -> x'),
+            nn.ReLU(),
+            BatchNorm(self.hidden_dim)
+        ])
 
-        self.gat0 = nn.Sequential(
+        self.layer_1 = Sequential('x, edge_index, edge_type', [
+            (RGCNConv(in_channels=self.hidden_dim, out_channels=self.hidden_dim, num_relations=2, is_sorted=True),
+             'x, edge_index,edge_type -> x'),
+            nn.ReLU(),
+            BatchNorm(self.hidden_dim)
+        ])
 
-        )
+        self.mlp = nn.Sequential(nn.Linear(self.hidden_dim, self.hidden_dim),
+                                 nn.Tanh(),
+                                 nn.Linear(self.hidden_dim, 2))
 
-        self.gat1 = nn.Sequential(
+        self.sm = nn.Softmax(dim=1)
 
-        )
-
-        self.gat2 = nn.Sequential(
-
-        )
-
-        # self.mlp = MLP(in_channels=16, hidden_channels=32,
-        #                out_channels=128, num_layers=2)
-
-        self.test = MLP(in_channels=128, hidden_channels=32,
-                        out_channels=1, num_layers=2)
-
-    def forward(self, data, batch_size):
-        """
-
-        :param data:
-        :param batch_size:
-        :return:
-        """
+    def forward(self, data):
 
         def extract(n, ast_x_matrix, ast_edge_index_matrix):
             n = n.transpose(0, 1)[0].tolist()
@@ -83,9 +78,23 @@ class StatementClassfier(nn.Module):
 
                 statement_vec = self.encoder(ast_x, ast_edge_index)
                 for k in range(self.encode_dim):
-                    data[i]['x'][j][k] = statement_vec[0][k]
+                    data[i]['statement'].x[j][k] = statement_vec[0][k]
+
         # 节点初始化特征学习完以后 开始外层GNN
-        print('hi')
+        x = data['statement'].x
+        edge_index = torch.cat([data['cfg']['edge_index'], data['dfg']['edge_index']], 1).long()
+
+        len_1 = data['cfg'].num_edges
+        len_2 = data['dfg'].num_edges
+
+        edge_type_1 = torch.zeros(len_1, )
+        edge_type_2 = torch.ones(len_2, )
+        edge_type = torch.cat([edge_type_1, edge_type_2], -1).int()
+
+        h = self.layer_0(x, edge_index, edge_type)
+        h = self.layer_1(h, edge_index, edge_type)
+        out = self.mlp(h)
+        return out
 
 
 class StatementEncoder(nn.Module):
@@ -99,8 +108,8 @@ class StatementEncoder(nn.Module):
 
         # 网络结构定义
         # 还是用GNN
-        # 用两层GAT + TopKPooling/MaxPooling
-
+        # 用两层GAT
+        # 池化暂时先用最简单的gmp看看效果 之后可以改成 TopKPooling/MaxPooling
         self.layer_0 = Sequential('x, edge_index', [
             (GATConv(in_channels=self.embedding_dim, out_channels=self.embedding_dim, heads=3,
                      dropout=self.dropout), 'x, edge_index -> x'),
@@ -133,8 +142,7 @@ class StatementEncoder(nn.Module):
         # 这样的ast直接把节点的嵌入返回即可
         size = len(x)
         if size > 1:
-            batch = torch.zeros(size, )
-            batch = torch.tensor(batch, dtype=torch.int64)
+            batch = torch.zeros(size, ).long()
 
             h = self.layer_0(x, edge_index)
             h = self.layer_1(h, edge_index)

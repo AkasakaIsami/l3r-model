@@ -1,12 +1,11 @@
 import functools
 import os.path
-import pickle
 from typing import Optional, Callable, Union, List, Tuple
 import numpy as np
 import pydot as pydot
 import torch
 from gensim.models import Word2Vec
-from torch_geometric.data import InMemoryDataset, Data
+from torch_geometric.data import InMemoryDataset, HeteroData
 
 from util import cut_word
 
@@ -81,7 +80,8 @@ class SingleProjectDataset(InMemoryDataset):
                 method = item[1]
                 path = os.path.join(project_root, clz, method)
 
-                graph_dict = {}
+                # graph_dict = {}
+                graph_data = HeteroData()
 
                 files = os.listdir(path)
                 for file in files:
@@ -90,9 +90,11 @@ class SingleProjectDataset(InMemoryDataset):
                         method_graph = pydot.graph_from_dot_file(method_graph_file)
                         method_graph = method_graph[0]
                         x, cfg_edge_index, dfg_edge_index, y = self.process_method_dot(method_graph)
-                        graph_dict['x'] = x
-                        graph_dict['edge_index'] = cfg_edge_index
-                        graph_dict['y'] = y
+                        graph_data['statement'].x = x
+                        graph_data['statement', 'cfg', 'statement'].edge_index = cfg_edge_index
+                        graph_data['statement', 'dfg', 'statement'].edge_index = dfg_edge_index
+                        graph_data['statement'].y = y.long()
+
                     else:
                         statement_dir = os.path.join(path, 'statements')
 
@@ -138,11 +140,11 @@ class SingleProjectDataset(InMemoryDataset):
                             return n, ast_x_matrix, ast_edge_index_matrix
 
                         n, ast_x_matrix, ast_edge_index_matrix = list_to_matrix(ast_x_list, ast_edge_index_list)
-                        graph_dict['n'] = n
-                        graph_dict['ast_x_matrix'] = ast_x_matrix
-                        graph_dict['ast_edge_index_matrix'] = ast_edge_index_matrix
+                        graph_data['n'] = n
+                        graph_data['ast_x_matrix'] = ast_x_matrix
+                        graph_data['ast_edge_index_matrix'] = ast_edge_index_matrix
 
-                graph_data = Data.from_dict(graph_dict)
+                # graph_data = Data.from_dict(graph_dict)
                 datalist.append(graph_data)
             return datalist
 
@@ -181,9 +183,9 @@ class SingleProjectDataset(InMemoryDataset):
         for node in nodes:
             label = node.get_attributes()['isLogged'] == '"true"'
             if label:
-                y.append([1])
+                y.append(1)
             else:
-                y.append([0])
+                y.append(0)
 
         y = torch.as_tensor(y)
 
