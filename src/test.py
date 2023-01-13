@@ -26,7 +26,7 @@ def test(model, test_dataset):
     with torch.no_grad():
         for i, data in enumerate(test_loader):
             y_hat = model(data)
-            y = data['statement'].y
+            y = data.y
 
             y_trans = y_hat.argmax(1)
 
@@ -36,15 +36,19 @@ def test(model, test_dataset):
             f1 = f1_score(y, y_trans)
 
             print(f"测试集第 {i + 1} 个 batch")
-            print(f"balanced_accuracy_score: {balanced_acc}")
-            print(f"precision_score: {ps}")
-            print(f"recall_score: {rc}")
-            print(f"f1_score: {f1}")
+            print(f"balanced_accuracy_score: {float_to_percent(balanced_acc)}")
+            print(f"precision_score: {float_to_percent(ps)}")
+            print(f"recall_score: {float_to_percent(rc)}")
+            print(f"f1_score: {float_to_percent(f1)}")
 
             test_data_size = test_data_size + len(y)
             acc = (y_trans == y).sum()
             total_acc = total_acc + acc
 
     total_acc = total_acc / test_data_size
-    total_acc_str = "%.2f%%" % (total_acc * 100)
-    print(f"测试集Accuracy: {total_acc_str}")
+    print(f"测试集Accuracy: {float_to_percent(total_acc)}")
+
+
+def float_to_percent(num) -> str:
+    # 浮点到百分比表示 保留两位小数
+    return "%.2f%%" % (num * 100)

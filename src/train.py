@@ -36,7 +36,7 @@ def train(train_dataset, validate_dataset, model_path):
         model.train()
         for i, data in enumerate(train_loader):
             y_hat = model(data)
-            y = data['statement'].y
+            y = data.y
             loss = loss_function(y_hat, y)
 
             optimizer.zero_grad()
@@ -59,7 +59,7 @@ def train(train_dataset, validate_dataset, model_path):
         with torch.no_grad():
             for i, data in enumerate(dev_loader):
                 y_hat = model(data)
-                y = data['statement'].y
+                y = data.y
                 loss = loss_function(y_hat, y)
 
                 total_val_loss += loss.item()

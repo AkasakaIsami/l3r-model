@@ -78,18 +78,12 @@ class StatementClassfier(nn.Module):
 
                 statement_vec = self.encoder(ast_x, ast_edge_index)
                 for k in range(self.encode_dim):
-                    data[i]['statement'].x[j][k] = statement_vec[0][k]
+                    data[i]['x'][j][k] = statement_vec[0][k]
 
         # 节点初始化特征学习完以后 开始外层GNN
-        x = data['statement'].x
-        edge_index = torch.cat([data['cfg']['edge_index'], data['dfg']['edge_index']], 1).long()
-
-        len_1 = data['cfg'].num_edges
-        len_2 = data['dfg'].num_edges
-
-        edge_type_1 = torch.zeros(len_1, )
-        edge_type_2 = torch.ones(len_2, )
-        edge_type = torch.cat([edge_type_1, edge_type_2], -1).int()
+        x = data.x
+        edge_index = data.edge_index
+        edge_type = data.edge_type
 
         h = self.layer_0(x, edge_index, edge_type)
         h = self.layer_1(h, edge_index, edge_type)
