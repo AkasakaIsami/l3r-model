@@ -9,7 +9,7 @@ def train(train_dataset, validate_dataset, model_path):
     # 定义一些超参
     HIDDEN_DIM = 100
     ENCODE_DIM = 128
-    EPOCHS = 10
+    EPOCHS = 5
     BATCH_SIZE = 2
     USE_GPU = False
 
@@ -76,10 +76,10 @@ def train(train_dataset, validate_dataset, model_path):
             best_model = model
 
     # 模型的保存 会报错……^_^
-    if not os.path.exists(model_path):
-        os.makedirs(model_path)
-    model_file = os.path.join(model_path, f"model.pth")
-    if not os.path.exists(model_file):
-        torch.save(best_model, model_file)
+    # if not os.path.exists(model_path):
+    #     os.makedirs(model_path)
+    # model_file = os.path.join(model_path, f"model.pth")
+    # if not os.path.exists(model_file):
+    #     torch.save(best_model, model_file)
 
     return best_model

@@ -20,12 +20,13 @@ class Pipeline:
     target_path (str): 读取数据的文件夹
     """
 
-    def __init__(self, ratio: str, project: str, src_path: str, target_path: str):
+    def __init__(self, ratio: str, project: str, root: str):
+        self.src_path = os.path.join(root, 'raw')
+        self.target_path = os.path.join(root, 'processed')
+
         self.embedding_size = None
         self.ratio = ratio
         self.project = project
-        self.src_path = os.path.join(src_path, project)
-        self.target_path = target_path
 
     def split_data(self):
         """
@@ -36,14 +37,13 @@ class Pipeline:
         ratios = [int(r) for r in self.ratio.split(':')]
 
         all_methods = []
-        classes = os.listdir(self.src_path)
+        project_dir = os.path.join(self.src_path, self.project)
+        classes = os.listdir(project_dir)
         for clz in classes:
-            if clz == ".DS_Store":
-                continue
-            if clz == self.project + '_corpus.txt' or clz == self.project + '_w2v_128.model':
+            method_dir = os.path.join(project_dir, clz)
+            if os.path.isfile(method_dir):
                 continue
 
-            method_dir = os.path.join(self.src_path, clz)
             methods = os.listdir(method_dir)
             for method in methods:
                 if method == ".DS_Store":
@@ -85,7 +85,7 @@ class Pipeline:
         :param embedding_size: 要训练的词嵌入大小
         """
         self.embedding_size = embedding_size
-        corpus_file_path = os.path.join(self.src_path, project + '_corpus.txt')
+        corpus_file_path = os.path.join(self.src_path, project, project + '_corpus.txt')
 
         from gensim.models import word2vec
 
@@ -94,7 +94,7 @@ class Pipeline:
 
         model_file_name = project + "_w2v_" + str(embedding_size) + '.model'
 
-        save_path = os.path.join(self.src_path, model_file_name)
+        save_path = os.path.join(self.src_path, project, model_file_name)
         if not os.path.exists(save_path):
             w2v.save(save_path)
 
@@ -105,7 +105,7 @@ class Pipeline:
         train_src, dev_src, test_src = self.split_data()
 
         print('词嵌入训练...')
-        self.dictionary_and_embedding("zookeeper", train_src, 128)
+        self.dictionary_and_embedding(self.project, train_src, 128)
 
         print('制作数据集...')
         train_dataset, validate_dataset, test_dataset = self.make_dataset(train_src, dev_src, test_src)
@@ -117,5 +117,5 @@ class Pipeline:
         test(model, test_dataset)
 
 
-ppl = Pipeline('3:1:1', 'zookeeper', '../data/raw', '../data/processed')
+ppl = Pipeline('3:1:1', 'kafkademo', '../data')
 ppl.run()

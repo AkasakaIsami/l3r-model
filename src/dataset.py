@@ -1,11 +1,13 @@
 import functools
 import os.path
+import time
 from typing import Optional, Callable, Union, List, Tuple
 import numpy as np
 import pydot as pydot
 import torch
 from gensim.models import Word2Vec
 from torch_geometric.data import InMemoryDataset, Data
+from tqdm import tqdm
 
 from util import cut_word
 
@@ -27,7 +29,6 @@ class SingleProjectDataset(InMemoryDataset):
             print(f"{dataset_type} using {self.processed_paths[1]} as dataset")
             self.data, self.slices = torch.load(self.processed_paths[1])
 
-
         elif dataset_type == "validate":
             print(f"{dataset_type} using {self.processed_paths[2]} as dataset")
             self.data, self.slices = torch.load(self.processed_paths[2])
@@ -37,13 +38,12 @@ class SingleProjectDataset(InMemoryDataset):
             self.data, self.slices = torch.load(self.processed_paths[3])
 
     @property
-    def raw_file_names(self) -> Union[str, List[str], Tuple]:
+    def raw_file_names(self) -> List[str]:
         paths = [self.project]
-
         return paths
 
     @property
-    def processed_file_names(self) -> Union[str, List[str], Tuple]:
+    def processed_file_names(self) -> List[str]:
         processed_train_path = os.path.join(self.project, "train_.pt")
         processed_dev_path = os.path.join(self.project, "dev_.pt")
         processed_test_path = os.path.join(self.project, "test_.pt")
@@ -75,12 +75,20 @@ class SingleProjectDataset(InMemoryDataset):
 
         def build_datalist(methods):
             datalist = []
-            for item in methods:
+
+            mbar = tqdm(methods,
+                        total=len(methods),
+                        leave=True,
+                        unit_scale=False,
+                        colour="red")
+
+            for _, item in enumerate(mbar):
                 clz = item[0]
                 method = item[1]
                 path = os.path.join(project_root, clz, method)
 
-                # graph_dict = {}
+                mbar.set_postfix_str(f"{clz}.{method}")
+
                 graph_data = {}
 
                 files = os.listdir(path)
@@ -155,8 +163,12 @@ class SingleProjectDataset(InMemoryDataset):
                 datalist.append(graph_data)
             return datalist
 
+        start = time.time()
+        print("正在制作训练数据集...")
         train_datalist = build_datalist(self.train_methods)
+        print("正在制作验证数据集...")
         dev_datalist = build_datalist(self.dev_methods)
+        print("正在制作测试数据集...")
         test_datalist = build_datalist(self.test_methods)
 
         if not os.path.exists(self.processed_paths[0]):
@@ -166,6 +178,8 @@ class SingleProjectDataset(InMemoryDataset):
         # 特写此注释 以表感谢
         # 等你回上海 我请你吃生蚝鸡煲
         # 没有阴阳怪气！！
+        end = time.time()
+        print(f"数据集制作完成，共耗时{end - start}秒。现在开始保存数据...")
         print("collating train data")
         data, slices = self.collate(train_datalist)
         torch.save((data, slices), self.processed_paths[1])
@@ -179,7 +193,9 @@ class SingleProjectDataset(InMemoryDataset):
         torch.save((data, slices), self.processed_paths[3])
 
     def process_method_dot(self, graph):
-        nodes = graph.get_node_list()[:-1]
+        nodes = graph.get_node_list()
+        if len(graph.get_node_list()) > 0 and graph.get_node_list()[-1].get_name() == '"\\n"':
+            nodes = graph.get_node_list()[:-1]
         node_num = len(nodes)
 
         # 初始化特征为128维的空向量
