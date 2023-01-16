@@ -1,4 +1,5 @@
 import re
+from random import random
 
 
 # 乱七八糟的工具方法都放在这个文件里吧 不然太乱了= =
@@ -108,3 +109,21 @@ def cut_hump(str):
                 flag = False
 
     return "".join(result)
+
+
+def float_to_percent(num) -> str:
+    # 浮点到百分比表示 保留两位小数
+    return "%.2f%%" % (num * 100)
+
+
+def random_unit(p: float):
+    """
+    以p概率执行某段函数
+    :param p:
+    :return:
+    """
+    R = random()
+    if R < p:
+        return True
+    else:
+        return False

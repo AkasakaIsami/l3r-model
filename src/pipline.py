@@ -85,7 +85,12 @@ class Pipeline:
         :param embedding_size: 要训练的词嵌入大小
         """
         self.embedding_size = embedding_size
+        # 创建过就不要训练了
         corpus_file_path = os.path.join(self.src_path, project, project + '_corpus.txt')
+        model_file_name = project + "_w2v_" + str(embedding_size) + '.model'
+
+        if os.path.exists(model_file_name):
+            return
 
         from gensim.models import word2vec
 
@@ -111,11 +116,11 @@ class Pipeline:
         train_dataset, validate_dataset, test_dataset = self.make_dataset(train_src, dev_src, test_src)
 
         print('开始训练...')
-        model = train(train_dataset, validate_dataset, "../data/model")
+        # model = train(train_dataset, validate_dataset, "../data/model")
 
         print('开始测试...')
-        test(model, test_dataset)
+        # test(model, test_dataset)
 
 
-ppl = Pipeline('3:1:1', 'kafkademo', '../data')
+ppl = Pipeline('8:1:1', 'kafkademo', '../data')
 ppl.run()
