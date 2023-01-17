@@ -1,6 +1,9 @@
 import os
 
 import pandas as pd
+import torch
+import configparser
+
 from dataset import SingleProjectDataset
 from test import test
 from train import train
@@ -24,6 +27,14 @@ class Pipeline:
         self.root = root
         self.src_path = os.path.join(root, 'raw')
         self.target_path = os.path.join(root, 'processed')
+
+        use_gpu = cf.getboolean('environment', 'useGPU')
+        if use_gpu and torch.cuda.is_available():
+            self.device = torch.device('cuda')
+            self.use_gpu = True
+        else:
+            self.device = torch.device('cpu')
+            self.use_gpu = False
 
         self.embedding_size = None
         self.ratio = ratio
@@ -57,6 +68,8 @@ class Pipeline:
         val_split = train_split + int(ratios[1] / sum(ratios) * method_num)
 
         data = pd.Series(all_methods)
+
+        # FIXME: 不知道这里有没有打乱成功 好像没有
         data.sample(frac=1, random_state=666)
 
         train = data.loc[:train_split]
@@ -66,13 +79,23 @@ class Pipeline:
         return train, dev, test
 
     def make_dataset(self, train, dev, test):
+        '''
+        根据函数列表创建数据集
+        因为创建数据集时有矩阵操作，要把设备传入
+        :param train:
+        :param dev:
+        :param test:
+        :return:
+        '''
         train_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="train",
-                                             train_methods=train, dev_methods=dev, test_methods=test)
+                                             train_methods=train, dev_methods=dev, test_methods=test,
+                                             device=self.device)
         # 第一次获取的时候就创建好了 所以不用再传了
         validate_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="validate",
-                                                train_methods=None, dev_methods=None, test_methods=None)
+                                                train_methods=None, dev_methods=None, test_methods=None,
+                                                device=self.device)
         test_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="test",
-                                            train_methods=None, dev_methods=None, test_methods=None)
+                                            train_methods=None, dev_methods=None, test_methods=None, device=self.device)
 
         print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
         return train_dataset, validate_dataset, test_dataset
@@ -123,5 +146,12 @@ class Pipeline:
         test(model, test_dataset)
 
 
-ppl = Pipeline('8:1:1', 'kafkademo', '../data')
+cf = configparser.ConfigParser()
+cf.read('config.ini')
+
+ratio = cf.get('data', 'datasetRadio')
+project_name = cf.get('data', 'projectName')
+data_src = cf.get('data', 'dataSrc')
+
+ppl = Pipeline(ratio=ratio, project=project_name, root=data_src)
 ppl.run()

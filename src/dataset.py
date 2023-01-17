@@ -15,7 +15,19 @@ from util import cut_word, random_unit
 class SingleProjectDataset(InMemoryDataset):
 
     def __init__(self, root, transform=None, pre_transform=None, project=None, dataset_type="train",
-                 train_methods=None, dev_methods=None, test_methods=None):
+                 train_methods=None, dev_methods=None, test_methods=None, device=torch.device('cpu')):
+        '''
+        默认创建cpu的数据
+        :param root: data根目录
+        :param transform: 不知道什么参数 默认的
+        :param pre_transform: 不知道什么参数 默认的
+        :param project: 要处理的项目
+        :param dataset_type: 要获取的数据集是训练数据集、验证数据集还是测试数据集
+        :param train_methods: 已经划分好的80%的训练函数列表
+        :param dev_methods: 已经划分好的10%的验证函数列表
+        :param test_methods: 已经划分好的10%的测试函数列表
+        :param device:
+        '''
         self.word2vec = None
         self.embeddings = None
         self.project = project

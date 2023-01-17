@@ -1,9 +1,10 @@
-import os.path
+import configparser
 
 import torch
-from fvcore.nn import sigmoid_focal_loss
 from sklearn.metrics import balanced_accuracy_score, precision_score, recall_score, f1_score, accuracy_score
 from torch_geometric.loader import DataLoader
+from torchvision.ops import sigmoid_focal_loss
+
 from model import StatementClassfier
 from util import float_to_percent
 
@@ -13,22 +14,35 @@ warnings.filterwarnings("ignore")
 
 
 def train(train_dataset, validate_dataset, model_path):
-    # 定义一些超参
-    HIDDEN_DIM = 100
-    ENCODE_DIM = 128
-    EPOCHS = 5
-    BATCH_SIZE = 64
-    USE_GPU = False
+    # 读取一些超参
+    cf = configparser.ConfigParser()
+    cf.read('config.ini')
+
+    EPOCHS = cf.getint('train', 'epoch')
+    BATCH_SIZE = cf.getint('train', 'batchSize')
+
+    HIDDEN_DIM = cf.getint('train', 'hiddenDIM')
+    ENCODE_DIM = cf.getint('train', 'encodeDIM')
+    C_NUM_LAYERS = cf.getint('train', 'STClassifierNumLayers')
+    E_NUM_LAYERS = cf.getint('train', 'STEncoderNumLayers')
+    DROP = cf.getfloat('train', 'dropout')
+
+    USE_GPU = cf.getboolean('environment', 'useGPU') and torch.cuda.is_available()
 
     train_loader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     dev_loader = DataLoader(dataset=validate_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
-    model = StatementClassfier()
-
     # 训练的配置
+    model = StatementClassfier(encode_dim=ENCODE_DIM, hidden_dim=HIDDEN_DIM, num_layers=C_NUM_LAYERS, dropout=DROP)
     parameters = model.parameters()
     optimizer = torch.optim.Adamax(parameters)
     loss_function = sigmoid_focal_loss
+
+    if USE_GPU:
+        '''
+        使用GPU的话，model需要转cuda
+        '''
+        model = model.cuda()
 
     # 用于寻找效果最好的模型
     best_acc = 0.0
@@ -42,9 +56,17 @@ def train(train_dataset, validate_dataset, model_path):
 
         model.train()
         for i, data in enumerate(train_loader):
+            if USE_GPU:
+                data = data.cuda()
+
             y_hat = model(data)
-            y = data.y
-            loss = loss_function(y_hat, y, alpha=0.75, gamma=1.25, reduction='mean')
+
+            if USE_GPU:
+                y_hat = y_hat.cuda()
+
+            y = data.y.float()
+            # FIXME: 要关注正样本的话，alpha到底应该设置成>0.5还是<0.5？
+            loss = loss_function(y_hat, y, alpha=0.75, reduction="mean")
 
             optimizer.zero_grad()
             loss.backward()
@@ -73,7 +95,14 @@ def train(train_dataset, validate_dataset, model_path):
         model.eval()
         with torch.no_grad():
             for i, data in enumerate(dev_loader):
+                if USE_GPU:
+                    data = data.cuda()
+
                 y_hat = model(data)
+
+                if USE_GPU:
+                    y_hat = y_hat.cuda()
+
                 y = data.y
                 y_hat_trans = y_hat.argmax(1)
                 y_trans = y.argmax(1)
@@ -82,7 +111,7 @@ def train(train_dataset, validate_dataset, model_path):
                 y_hat_total = torch.cat([y_hat_total, y_hat_trans])
                 y_total = torch.cat([y_total, y_trans])
 
-                loss = loss_function(y_hat, y, alpha=0.75, gamma=1.25, reduction='mean')
+                loss = loss_function(y_hat, y, alpha=0.75)
                 total_val_loss += loss.item()
 
                 val_data_size = val_data_size + len(y)
