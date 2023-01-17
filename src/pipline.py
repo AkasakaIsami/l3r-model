@@ -21,6 +21,7 @@ class Pipeline:
     """
 
     def __init__(self, ratio: str, project: str, root: str):
+        self.root = root
         self.src_path = os.path.join(root, 'raw')
         self.target_path = os.path.join(root, 'processed')
 
@@ -65,12 +66,12 @@ class Pipeline:
         return train, dev, test
 
     def make_dataset(self, train, dev, test):
-        train_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="train",
+        train_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="train",
                                              train_methods=train, dev_methods=dev, test_methods=test)
         # 第一次获取的时候就创建好了 所以不用再传了
-        validate_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="validate",
+        validate_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="validate",
                                                 train_methods=None, dev_methods=None, test_methods=None)
-        test_dataset = SingleProjectDataset(root="../data", project=self.project, dataset_type="test",
+        test_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="test",
                                             train_methods=None, dev_methods=None, test_methods=None)
 
         print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
@@ -116,10 +117,10 @@ class Pipeline:
         train_dataset, validate_dataset, test_dataset = self.make_dataset(train_src, dev_src, test_src)
 
         print('开始训练...')
-        # model = train(train_dataset, validate_dataset, "../data/model")
+        model = train(train_dataset, validate_dataset, "../data/model")
 
         print('开始测试...')
-        # test(model, test_dataset)
+        test(model, test_dataset)
 
 
 ppl = Pipeline('8:1:1', 'kafkademo', '../data')

@@ -39,6 +39,11 @@ class StatementClassfier(nn.Module):
                                  nn.Tanh(),
                                  nn.Linear(self.hidden_dim, 2))
 
+        # 第二个mlp 对于只有一个节点的图那就过个全连接吧- -
+        self.mlp_2 = nn.Sequential(nn.Linear(self.encode_dim, self.hidden_dim),
+                                   nn.Tanh(),
+                                   nn.Linear(self.hidden_dim, 2))
+
         self.sm = nn.Softmax(dim=1)
 
     def forward(self, data):
@@ -84,10 +89,12 @@ class StatementClassfier(nn.Module):
         x = data.x
         edge_index = data.edge_index
         edge_type = data.edge_type
-
-        h = self.layer_0(x, edge_index, edge_type)
-        h = self.layer_1(h, edge_index, edge_type)
-        out = self.mlp(h)
+        if x.shape[0] > 1:
+            h = self.layer_0(x, edge_index, edge_type)
+            h = self.layer_1(h, edge_index, edge_type)
+            out = self.mlp(h)
+        else:
+            out = self.mlp_2(x)
         return out
 
 
