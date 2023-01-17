@@ -321,7 +321,9 @@ class SingleProjectDataset(InMemoryDataset):
             return result
 
         x = []
-        nodes = graph.get_node_list()[:-1]
+        nodes = graph.get_node_list()
+        if len(graph.get_node_list()) > 0 and graph.get_node_list()[-1].get_name() == '"\\n"':
+            nodes = graph.get_node_list()[:-1]
 
         # 没节点就一个随机的
         if len(nodes) == 0:

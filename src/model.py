@@ -16,11 +16,10 @@ class StatementClassfier(nn.Module):
         self.dropout = dropout  # 0.2吧
 
         self.gpu = use_gpu
-        self.th = torch.cuda if use_gpu else torch
 
         # 网络结构的定义
         # 就用RGCN吧 两层RGCN/RGAT都可以试试看
-        self.encoder = StatementEncoder(self.embedding_dim, self.hidden_dim, self.encode_dim, self.gpu, self.dropout)
+        self.encoder = StatementEncoder(self.embedding_dim, self.hidden_dim, self.encode_dim, self.dropout, self.gpu)
         self.layer_0 = Sequential('x, edge_index, edge_type', [
             (RGCNConv(in_channels=self.encode_dim, out_channels=self.hidden_dim, num_relations=2, is_sorted=True),
              'x, edge_index,edge_type -> x'),
@@ -99,7 +98,7 @@ class StatementClassfier(nn.Module):
 
 
 class StatementEncoder(nn.Module):
-    def __init__(self, embedding_dim, hidden_dim, encode_dim, use_gpu, dropout) -> None:
+    def __init__(self, embedding_dim, hidden_dim, encode_dim, dropout, use_gpu) -> None:
         super().__init__()
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
@@ -144,6 +143,8 @@ class StatementEncoder(nn.Module):
         size = len(x)
         if size > 1:
             batch = torch.zeros(size, ).long()
+            if self.use_gpu:
+                batch = batch.cuda()
 
             h = self.layer_0(x, edge_index)
             h = self.layer_1(h, edge_index)

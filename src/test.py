@@ -1,14 +1,17 @@
+import configparser
+
 import torch
 from torch_geometric.loader import DataLoader
 from sklearn.metrics import recall_score, precision_score, balanced_accuracy_score, f1_score, accuracy_score
 
+from src.model import StatementClassfier
 from util import float_to_percent
 import warnings
 
 warnings.filterwarnings("ignore")
 
 
-def test(model, test_dataset):
+def test(model_path, test_dataset):
     """
     有几个指标要写
         1. Loss 验证集中所有数据表现出的损失值Loss
@@ -18,11 +21,19 @@ def test(model, test_dataset):
         5. Recall
         6. F1
 
-    :param model:
+    :param model_path:
     :param test_dataset:
     :return:
     """
-    test_loader = DataLoader(dataset=test_dataset, batch_size=64, shuffle=False)
+
+    model = torch.load(model_path)
+
+    cf = configparser.ConfigParser()
+    cf.read('config.ini')
+    BATCH_SIZE = cf.getint('train', 'batchSize')
+    USE_GPU = cf.getboolean('environment', 'useGPU') and torch.cuda.is_available()
+
+    test_loader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     total_acc = 0.0
     test_data_size = 0
@@ -33,8 +44,19 @@ def test(model, test_dataset):
 
     with torch.no_grad():
         for i, data in enumerate(test_loader):
+            if USE_GPU:
+                data = data.cuda()
+
             y_hat = model(data)
+
+            if USE_GPU:
+                y_hat = y_hat.cpu()
+
             y = data.y
+
+            if USE_GPU:
+                y = y.cpu()
+
             y_hat_trans = y_hat.argmax(1)
             y_trans = y.argmax(1)
 

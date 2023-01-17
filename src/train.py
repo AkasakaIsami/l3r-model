@@ -1,4 +1,6 @@
 import configparser
+import os
+from datetime import datetime
 
 import torch
 from sklearn.metrics import balanced_accuracy_score, precision_score, recall_score, f1_score, accuracy_score
@@ -13,7 +15,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def train(train_dataset, validate_dataset, model_path):
+def train(train_dataset, validate_dataset, model_path) -> str:
     # 读取一些超参
     cf = configparser.ConfigParser()
     cf.read('config.ini')
@@ -33,7 +35,8 @@ def train(train_dataset, validate_dataset, model_path):
     dev_loader = DataLoader(dataset=validate_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
     # 训练的配置
-    model = StatementClassfier(encode_dim=ENCODE_DIM, hidden_dim=HIDDEN_DIM, num_layers=C_NUM_LAYERS, dropout=DROP)
+    model = StatementClassfier(encode_dim=ENCODE_DIM, hidden_dim=HIDDEN_DIM, num_layers=C_NUM_LAYERS, dropout=DROP,
+                               use_gpu=USE_GPU)
     parameters = model.parameters()
     optimizer = torch.optim.Adamax(parameters)
     loss_function = sigmoid_focal_loss
@@ -60,10 +63,6 @@ def train(train_dataset, validate_dataset, model_path):
                 data = data.cuda()
 
             y_hat = model(data)
-
-            if USE_GPU:
-                y_hat = y_hat.cuda()
-
             y = data.y.float()
             # FIXME: 要关注正样本的话，alpha到底应该设置成>0.5还是<0.5？
             loss = loss_function(y_hat, y, alpha=0.75, reduction="mean")
@@ -92,6 +91,10 @@ def train(train_dataset, validate_dataset, model_path):
         y_hat_total = torch.randn(0)
         y_total = torch.randn(0)
 
+        if USE_GPU:
+            y_hat_total = y_hat_total.cuda()
+            y_total = y_total.cuda()
+
         model.eval()
         with torch.no_grad():
             for i, data in enumerate(dev_loader):
@@ -103,7 +106,7 @@ def train(train_dataset, validate_dataset, model_path):
                 if USE_GPU:
                     y_hat = y_hat.cuda()
 
-                y = data.y
+                y = data.y.float()
                 y_hat_trans = y_hat.argmax(1)
                 y_trans = y.argmax(1)
 
@@ -111,7 +114,7 @@ def train(train_dataset, validate_dataset, model_path):
                 y_hat_total = torch.cat([y_hat_total, y_hat_trans])
                 y_total = torch.cat([y_total, y_trans])
 
-                loss = loss_function(y_hat, y, alpha=0.75)
+                loss = loss_function(y_hat, y, alpha=0.75, reduction='mean')
                 total_val_loss += loss.item()
 
                 val_data_size = val_data_size + len(y)
@@ -124,11 +127,11 @@ def train(train_dataset, validate_dataset, model_path):
         total_acc_str = "%.2f%%" % (total_acc * 100)
         print(f"验证集Accuracy: {total_acc_str}")
 
-        acc = accuracy_score(y_total, y_hat_total)
-        balanced_acc = balanced_accuracy_score(y_total, y_hat_total)
-        ps = precision_score(y_total, y_hat_total)
-        rc = recall_score(y_total, y_hat_total)
-        f1 = f1_score(y_total, y_hat_total)
+        acc = accuracy_score(y_total.cpu(), y_hat_total.cpu())
+        balanced_acc = balanced_accuracy_score(y_total.cpu(), y_hat_total.cpu())
+        ps = precision_score(y_total.cpu(), y_hat_total.cpu())
+        rc = recall_score(y_total.cpu(), y_hat_total.cpu())
+        f1 = f1_score(y_total.cpu(), y_hat_total.cpu())
 
         print(f"验证集 accuracy_score: {float_to_percent(acc)}")
         print(f"验证集 balanced_accuracy_score: {float_to_percent(balanced_acc)}")
@@ -140,11 +143,17 @@ def train(train_dataset, validate_dataset, model_path):
         if balanced_acc > best_acc:
             best_model = model
 
-    # 模型的保存 会报错……^_^
-    # if not os.path.exists(model_path):
-    #     os.makedirs(model_path)
-    # model_file = os.path.join(model_path, f"model.pth")
-    # if not os.path.exists(model_file):
-    #     torch.save(best_model, model_file)
+    def save_model(best_model, model_path: str) -> str:
+        if not os.path.exists(model_path):
+            os.makedirs(model_path)
 
-    return best_model
+        curr_time = datetime.now()
+        time_str = datetime.strftime(curr_time, '%Y-%m-%d_%H:%M:%S')
+        file_name = 'model_' + time_str + '_' + float_to_percent(balanced_acc) + '.pth'
+        save_path = os.path.join(model_path, file_name)
+
+        torch.save(model, save_path)
+        print('模型保存成功！')
+        return save_path
+
+    return save_model(best_model, model_path)

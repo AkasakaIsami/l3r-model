@@ -140,18 +140,19 @@ class Pipeline:
         train_dataset, validate_dataset, test_dataset = self.make_dataset(train_src, dev_src, test_src)
 
         print('开始训练...')
-        model = train(train_dataset, validate_dataset, "../data/model")
+        model_path = train(train_dataset, validate_dataset, os.path.join(self.root, 'model', self.project))
 
         print('开始测试...')
-        test(model, test_dataset)
+        test(model_path, test_dataset)
 
 
-cf = configparser.ConfigParser()
-cf.read('config.ini')
+if __name__ == '__main__':
+    cf = configparser.ConfigParser()
+    cf.read('config.ini')
 
-ratio = cf.get('data', 'datasetRadio')
-project_name = cf.get('data', 'projectName')
-data_src = cf.get('data', 'dataSrc')
+    ratio = cf.get('data', 'datasetRadio')
+    project_name = cf.get('data', 'projectName')
+    data_src = cf.get('data', 'dataSrc')
 
-ppl = Pipeline(ratio=ratio, project=project_name, root=data_src)
-ppl.run()
+    ppl = Pipeline(ratio=ratio, project=project_name, root=data_src)
+    ppl.run()
