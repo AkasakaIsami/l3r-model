@@ -1,5 +1,6 @@
 import functools
 import os.path
+import random
 import time
 from typing import Optional, Callable, Union, List, Tuple
 import numpy as np
@@ -9,31 +10,18 @@ from gensim.models import Word2Vec
 from torch_geometric.data import InMemoryDataset, Data
 from tqdm import tqdm
 
-from util import cut_word, random_unit
+from util import cut_word, random_unit, float_to_percent
 
 
 class SingleProjectDataset(InMemoryDataset):
 
     def __init__(self, root, transform=None, pre_transform=None, project=None, dataset_type="train",
-                 train_methods=None, dev_methods=None, test_methods=None, device=torch.device('cpu')):
-        '''
-        默认创建cpu的数据
-        :param root: data根目录
-        :param transform: 不知道什么参数 默认的
-        :param pre_transform: 不知道什么参数 默认的
-        :param project: 要处理的项目
-        :param dataset_type: 要获取的数据集是训练数据集、验证数据集还是测试数据集
-        :param train_methods: 已经划分好的80%的训练函数列表
-        :param dev_methods: 已经划分好的10%的验证函数列表
-        :param test_methods: 已经划分好的10%的测试函数列表
-        :param device:
-        '''
+                 methods=None, ratio='8:1:1'):
         self.word2vec = None
         self.embeddings = None
         self.project = project
-        self.train_methods = train_methods
-        self.dev_methods = dev_methods
-        self.test_methods = test_methods
+        self.methods = methods
+        self.ratio = ratio
 
         super(SingleProjectDataset, self).__init__(root, transform, pre_transform)
 
@@ -65,16 +53,6 @@ class SingleProjectDataset(InMemoryDataset):
         pass
 
     def process(self):
-        """
-        每个data对应一个函数
-        所以一个data应该包括：
-            1 一个代表函数的特征矩阵
-            2 一个代表控制流边的边矩阵
-            3 一个代表数据流边的边矩阵
-            4 一个特征矩阵列表，包含每个语句的AST特征矩阵
-            5 一个边矩阵列表，包含每个语句的AST边矩阵
-        :return:
-        """
         project_root = self.raw_paths[0]
 
         # 先导入词嵌入矩阵
@@ -85,140 +63,182 @@ class SingleProjectDataset(InMemoryDataset):
         self.word2vec = word2vec
         self.embeddings = embeddings
 
-        def build_datalist(methods):
-            datalist = []
+        # 开始根据传入的函数制作数据集
+        mbar = tqdm(self.methods,
+                    total=len(self.methods),
+                    leave=True,
+                    unit_scale=False,
+                    colour="red")
 
-            mbar = tqdm(methods,
-                        total=len(methods),
-                        leave=True,
-                        unit_scale=False,
-                        colour="red")
+        # 逻辑就是不再像之前一样分成三份分别做
+        # 而是做成一大份
+        # 但这一大份会被分成两小份
+        # 一份里面全装没日志的函数
+        # 还有一份里装有日志的函数
+        # 做完这一大份 再去分三份
 
-            # 用来控制跳过一些数据的flag
-            skip = False
-            for _, item in enumerate(mbar):
-                clz = item[0]
-                method = item[1]
-                path = os.path.join(project_root, clz, method)
-
-                mbar.set_postfix_str(f"{clz}.{method}")
-
-                graph_data = {}
-
-                files = os.listdir(path)
-                for file in files:
-                    if file != 'statements':
-                        method_graph_file = os.path.join(path, file)
-                        method_graph = pydot.graph_from_dot_file(method_graph_file)
-                        method_graph = method_graph[0]
-
-                        is_all_negative, x, cfg_edge_index, dfg_edge_index, y = self.process_method_dot(method_graph)
-
-                        # 如果is_all_negative是True，意味着当前函数不存在日志语句
-                        # 30%的概率丢弃当前函数
-                        if is_all_negative:
-                            if random_unit(0.5):
-                                skip = True
-                                break
-
-                        graph_data['x'] = x
-                        graph_data['edge_index'] = torch.cat([cfg_edge_index, dfg_edge_index], 1).long()
-
-                        len_1 = cfg_edge_index.shape[1]
-                        len_2 = dfg_edge_index.shape[1]
-                        edge_type_1 = torch.zeros(len_1, )
-                        edge_type_2 = torch.ones(len_2, )
-                        edge_type = torch.cat([edge_type_1, edge_type_2], -1).long()
-
-                        graph_data['edge_type'] = edge_type
-                        graph_data['y'] = y.long()
-
-                    else:
-                        statement_dir = os.path.join(path, 'statements')
-
-                        def filename_cmp(x, y):
-                            index_x = int(x[1:x.find('_')])
-                            index_y = int(y[1: y.find('_')])
-
-                            if index_x < index_y:
-                                return -1
-                            else:
-                                return 1
-
-                        statement_files = os.listdir(statement_dir)
-                        statement_files.sort(key=functools.cmp_to_key(filename_cmp))
-
-                        n = len(statement_files)
-
-                        ast_x_list = []
-                        ast_edge_index_list = []
-
-                        for i in range(n):
-                            statement_file = statement_files[i]
-
-                            statement_ast = os.path.join(statement_dir, statement_file)
-                            statement_graph = pydot.graph_from_dot_file(statement_ast)
-                            statement_graph = statement_graph[0]
-
-                            # 初始化节点特征的时候用了w2v 所以把矩阵导入
-                            ast_x, ast_edge_index = self.process_statement_dot(graph=statement_graph)
-                            ast_x_list.append(ast_x)
-                            ast_edge_index_list.append(ast_edge_index)
-
-                        def list_to_matrix(ast_x_list, ast_edge_index_list):
-                            n = []
-                            for ast_x in ast_x_list:
-                                temp_n = len(ast_x)
-                                n.append([temp_n])
-                            n = torch.tensor(n)
-
-                            ast_x_matrix = torch.cat(ast_x_list, 0)
-                            ast_edge_index_matrix = torch.cat(ast_edge_index_list, 1).int()
-
-                            return n, ast_x_matrix, ast_edge_index_matrix
-
-                        n, ast_x_matrix, ast_edge_index_matrix = list_to_matrix(ast_x_list, ast_edge_index_list)
-                        graph_data['n'] = n
-                        graph_data['ast_x_matrix'] = ast_x_matrix
-                        graph_data['ast_edge_index_matrix'] = ast_edge_index_matrix
-
-                # 如果需要跳过 就不要把当前的数据加进datalist了 直接continue
-                if skip:
-                    skip = False
-                    continue
-
-                graph_data = Data.from_dict(graph_data)
-                datalist.append(graph_data)
-            return datalist
+        # 这里不存data列表而存字典是因为要知道每条数据对应哪个函数
+        logged_data_dict = {}
+        unlogged_data_dict = {}
 
         start = time.time()
-        print("正在制作训练数据集...")
-        train_datalist = build_datalist(self.train_methods)
-        print("正在制作验证数据集...")
-        dev_datalist = build_datalist(self.dev_methods)
-        print("正在制作测试数据集...")
-        test_datalist = build_datalist(self.test_methods)
+        for _, item in enumerate(mbar):
+            clz = item[0]
+            method = item[1]
+            path = os.path.join(project_root, clz, method)
+            mbar.set_postfix_str(f"{clz}.{method}")
 
-        if not os.path.exists(self.processed_paths[0]):
-            os.makedirs(self.processed_paths[0])
+            files = os.listdir(path)
+            # 这里的优化是 强制先解析函数文件
+            # 如果是无日志的函数 40%概率丢弃这条数据
 
-        # 2023.01.11 2:46 am 感谢维饶帮我debug到凌晨三点
-        # 特写此注释 以表感谢
-        # 等你回上海 我请你吃生蚝鸡煲
-        # 没有阴阳怪气！！
-        end = time.time()
-        print(f"数据集制作完成，共耗时{end - start}秒。现在开始保存数据...")
-        print("collating train data")
-        data, slices = self.collate(train_datalist)
-        torch.save((data, slices), self.processed_paths[1])
+            graph_data = {}
 
-        print("collating validate data")
-        data, slices = self.collate(dev_datalist)
-        torch.save((data, slices), self.processed_paths[2])
+            method_graph_file = None
+            statement_graphs_file = None
 
-        print("collating test data")
-        data, slices = self.collate(test_datalist)
-        torch.save((data, slices), self.processed_paths[3])
+            for file in files:
+                if file == '.DS_Store':
+                    continue
+                elif file.startswith('statements'):
+                    statement_graphs_file = file
+                else:
+                    method_graph_file = file
+
+            # 开始解析函数图
+            method_graph_path = os.path.join(path, method_graph_file)
+            method_graphs = pydot.graph_from_dot_file(method_graph_path)
+            method_graph = method_graphs[0]
+
+            is_all_negative, x, cfg_edge_index, dfg_edge_index, y = self.process_method_dot(method_graph)
+
+            # 如果is_all_negative是True，意味着当前函数不存在日志语句
+            # 30%的概率丢弃当前函数
+            if is_all_negative:
+                if random_unit(0.5):
+                    continue
+
+            # 这个语句在最后将单条数据添加到数据集的时候要用 训练的时候不用
+            graph_data['is_all_negative'] = is_all_negative
+
+            graph_data['x'] = x
+            graph_data['edge_index'] = torch.cat([cfg_edge_index, dfg_edge_index], 1).long()
+
+            len_1 = cfg_edge_index.shape[1]
+            len_2 = dfg_edge_index.shape[1]
+            edge_type_1 = torch.zeros(len_1, )
+            edge_type_2 = torch.ones(len_2, )
+            edge_type = torch.cat([edge_type_1, edge_type_2], -1).long()
+
+            graph_data['edge_type'] = edge_type
+            graph_data['y'] = y.long()
+
+            # 解析所有语句图
+            statements_path = os.path.join(path, statement_graphs_file)
+            statement_graphs = pydot.graph_from_dot_file(statements_path)
+
+            # 简单做个验证
+            if len(statement_graphs) != len(graph_data['x']):
+                print(f"!!!!!!!!!!!!!!!!!!{clz}的{method}解析的有问题！！！")
+
+            ast_x_list = []
+            ast_edge_index_list = []
+            for statement_graph in statement_graphs:
+                ast_x, ast_edge_index = self.process_statement_dot(graph=statement_graph)
+                ast_x_list.append(ast_x)
+                ast_edge_index_list.append(ast_edge_index)
+
+            def list_to_matrix(ast_x_list, ast_edge_index_list):
+                n = []
+                for ast_x in ast_x_list:
+                    temp_n = len(ast_x)
+                    n.append([temp_n])
+                n = torch.tensor(n)
+
+                ast_x_matrix = torch.cat(ast_x_list, 0)
+                ast_edge_index_matrix = torch.cat(ast_edge_index_list, 1).int()
+
+                return n, ast_x_matrix, ast_edge_index_matrix
+
+            n, ast_x_matrix, ast_edge_index_matrix = list_to_matrix(ast_x_list, ast_edge_index_list)
+            graph_data['n'] = n
+            graph_data['ast_x_matrix'] = ast_x_matrix
+            graph_data['ast_edge_index_matrix'] = ast_edge_index_matrix
+
+            key = clz + '@' + method
+            if graph_data['is_all_negative']:
+                del graph_data['is_all_negative']
+                graph_data = Data.from_dict(graph_data)
+                unlogged_data_dict[key] = graph_data
+            else:
+                del graph_data['is_all_negative']
+                graph_data = Data.from_dict(graph_data)
+                logged_data_dict[key] = graph_data
+
+        score = len(logged_data_dict) / (len(unlogged_data_dict) + len(logged_data_dict))
+        print(f"完成数据读取，正数据分别是{len(unlogged_data_dict)}和{len(logged_data_dict)}，正样本比例为{float_to_percent(score)}")
+
+        def split_data(unlogged_data_dict: dict, logged_data_dict: dict):
+            train_datalist = []
+            dev_datalist = []
+            test_datalist = []
+
+            test_methods = []
+
+            ratios = [int(r) for r in self.ratio.split(':')]
+
+            n_unlogged = len(unlogged_data_dict)
+            n_logged = len(logged_data_dict)
+
+            train_split_unlogged = int(ratios[0] / sum(ratios) * n_unlogged)
+            val_split_unlogged = train_split_unlogged + int(ratios[1] / sum(ratios) * n_unlogged)
+            train_datalist.extend(list(unlogged_data_dict.values())[:train_split_unlogged])
+            dev_datalist.extend(list(unlogged_data_dict.values())[train_split_unlogged:val_split_unlogged])
+            test_datalist.extend(list(unlogged_data_dict.values())[val_split_unlogged:])
+            test_methods.extend(list(unlogged_data_dict.keys())[val_split_unlogged:])
+
+            train_split_logged = int(ratios[0] / sum(ratios) * n_logged)
+            val_split_logged = train_split_logged + int(ratios[1] / sum(ratios) * n_logged)
+            train_datalist.extend(list(logged_data_dict.values())[:train_split_logged])
+            dev_datalist.extend(list(logged_data_dict.values())[train_split_logged:val_split_logged])
+            test_datalist.extend(list(logged_data_dict.values())[val_split_logged:])
+            test_methods.extend(list(logged_data_dict.keys())[val_split_logged:])
+
+            # 因为是根据标签顺序拼接的 所以打乱一下train_datalist 和 dev_datalist
+            random.shuffle(train_datalist)
+            random.shuffle(dev_datalist)
+
+            return train_datalist, dev_datalist, test_datalist, test_methods
+
+        def save_data(train_datalist: list, dev_datalist: list, test_datalist: list, test_methods: list):
+            # 2023.01.11 2:46 am 感谢维饶帮我debug到凌晨三点
+            # 特写此注释 以表感谢
+            # 等你回上海 我请你吃生蚝鸡煲
+            # 没有阴阳怪气！！
+            if not os.path.exists(self.processed_paths[0]):
+                os.makedirs(self.processed_paths[0])
+
+            end = time.time()
+            print(f"数据集制作完成，共耗时{end - start}秒。现在开始保存数据...")
+
+            print("collating train data")
+            data, slices = self.collate(train_datalist)
+            torch.save((data, slices), self.processed_paths[1])
+
+            print("collating validate data")
+            data, slices = self.collate(dev_datalist)
+            torch.save((data, slices), self.processed_paths[2])
+
+            print("collating test data")
+            data, slices = self.collate(test_datalist)
+            torch.save((data, slices), self.processed_paths[3])
+
+            # TODO: 函数名的保存以后再写吧！
+
+        train_datalist, dev_datalist, test_datalist, test_methods = split_data(unlogged_data_dict, logged_data_dict)
+        print(
+            f"完成数据集切分，训练集数据量{len(train_datalist)},验证集数据量{len(dev_datalist)},测试集数据量{len(test_datalist)}")
+        save_data(train_datalist, dev_datalist, test_datalist, test_methods)
 
     def process_method_dot(self, graph):
         """
@@ -240,7 +260,7 @@ class SingleProjectDataset(InMemoryDataset):
         is_all_negative = True
         y = []
         for node in nodes:
-            label = node.get_attributes()['isLogged'] == '"true"'
+            label = 'true' in node.get_attributes()['isLogged']
             if label:
                 y.append([0, 1])
                 is_all_negative = False
@@ -357,24 +377,3 @@ class SingleProjectDataset(InMemoryDataset):
         edge_index = torch.cat([edge_0, edge_1], dim=0)
 
         return x, edge_index
-
-
-class AllProjectsDataset(InMemoryDataset):
-
-    def __init__(self, root: Optional[str] = None, transform: Optional[Callable] = None,
-                 pre_transform: Optional[Callable] = None, pre_filter: Optional[Callable] = None, log: bool = True):
-        super().__init__(root, transform, pre_transform, pre_filter, log)
-
-    @property
-    def raw_file_names(self) -> Union[str, List[str], Tuple]:
-        return []
-
-    @property
-    def processed_file_names(self) -> Union[str, List[str], Tuple]:
-        return []
-
-    def download(self):
-        pass
-
-    def process(self):
-        pass

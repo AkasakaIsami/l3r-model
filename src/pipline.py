@@ -1,27 +1,22 @@
+import configparser
 import os
 
 import pandas as pd
 import torch
-import configparser
+from pandas import Series
 
 from dataset import SingleProjectDataset
 from test import test
 from train import train
 
+'''
+因为数据集构建的逻辑要重构 
+不想覆盖原来的代码
+所以直接重写一遍
+'''
+
 
 class Pipeline:
-    """
-    pipline类，完成训练模型前的准备工作，包括
-        预处理数据 把java得到的数据集转换成pytorch可以处理的数据格式
-        切分数据集
-        对于当前项目 准备embedding矩阵并写入文件
-
-    Args:
-    ratio (str): 训练集、验证集、测试集比例
-    project (str): 指定作为目标数据的项目
-    src_path (str): 读取数据的文件夹
-    target_path (str): 读取数据的文件夹
-    """
 
     def __init__(self, ratio: str, project: str, root: str):
         self.root = root
@@ -40,67 +35,7 @@ class Pipeline:
         self.ratio = ratio
         self.project = project
 
-    def split_data(self):
-        """
-        读取目标项目下的所有的函数目录 然后按比例进行切割
-
-        :return:
-        """
-        ratios = [int(r) for r in self.ratio.split(':')]
-
-        all_methods = []
-        project_dir = os.path.join(self.src_path, self.project)
-        classes = os.listdir(project_dir)
-        for clz in classes:
-            method_dir = os.path.join(project_dir, clz)
-            if os.path.isfile(method_dir):
-                continue
-
-            methods = os.listdir(method_dir)
-            for method in methods:
-                if method == ".DS_Store":
-                    continue
-                all_methods.append((clz, method))
-
-        method_num = len(all_methods)
-
-        train_split = int(ratios[0] / sum(ratios) * method_num)
-        val_split = train_split + int(ratios[1] / sum(ratios) * method_num)
-
-        data = pd.Series(all_methods)
-
-        # FIXME: 不知道这里有没有打乱成功 好像没有
-        data.sample(frac=1, random_state=666)
-
-        train = data.loc[:train_split]
-        dev = data.loc[train_split:val_split]
-        test = data.loc[val_split:]
-
-        return train, dev, test
-
-    def make_dataset(self, train, dev, test):
-        '''
-        根据函数列表创建数据集
-        因为创建数据集时有矩阵操作，要把设备传入
-        :param train:
-        :param dev:
-        :param test:
-        :return:
-        '''
-        train_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="train",
-                                             train_methods=train, dev_methods=dev, test_methods=test,
-                                             device=self.device)
-        # 第一次获取的时候就创建好了 所以不用再传了
-        validate_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="validate",
-                                                train_methods=None, dev_methods=None, test_methods=None,
-                                                device=self.device)
-        test_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="test",
-                                            train_methods=None, dev_methods=None, test_methods=None, device=self.device)
-
-        print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
-        return train_dataset, validate_dataset, test_dataset
-
-    def dictionary_and_embedding(self, project, train_data, embedding_size):
+    def dictionary_and_embedding(self, project, embedding_size):
         """
         construct dictionary and train word embedding
 
@@ -127,18 +62,65 @@ class Pipeline:
         if not os.path.exists(save_path):
             w2v.save(save_path)
 
+    def get_data(self) -> Series:
+        """
+        最开始看astnn的源码 看他们是先切数据集所以才能建语料库的
+        我上当了
+        这个函数不再做切分了
+        但是要丢弃所有后缀为Test的类
+
+        :return: 返回所有的函数列表
+        """
+
+        all_methods = []
+        project_dir = os.path.join(self.src_path, self.project)
+        classes = os.listdir(project_dir)
+
+        for clz in classes:
+
+            method_dir = os.path.join(project_dir, clz)
+            if os.path.isfile(method_dir):
+                continue
+
+            if clz.endswith('Test'):
+                continue
+
+            methods = os.listdir(method_dir)
+            for method in methods:
+                if method == ".DS_Store":
+                    continue
+                all_methods.append((clz, method))
+
+        data = pd.Series(all_methods)
+        data = data.sample(frac=1)
+
+        return data
+
+    def make_dataset(self, methods):
+        train_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="train",
+                                             methods=methods,
+                                             ratio=self.ratio)
+        # 第一次获取的时候就创建好了 所以不用再传了
+        validate_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="validate")
+        test_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="test")
+
+        print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
+        return train_dataset, validate_dataset, test_dataset
+
     def run(self):
         print(f'开始数据预处理（目标项目为{self.project}）...')
 
-        print('切分数据...')
-        train_src, dev_src, test_src = self.split_data()
-
         print('词嵌入训练...')
-        self.dictionary_and_embedding(self.project, train_src, 128)
+        self.dictionary_and_embedding(self.project, 128)
+
+        print('获取源数据...')
+        method_list = self.get_data()
 
         print('制作数据集...')
-        train_dataset, validate_dataset, test_dataset = self.make_dataset(train_src, dev_src, test_src)
+        # 这里开始不一样了 切分数据集的工作交给DataSet去做
+        train_dataset, validate_dataset, test_dataset = self.make_dataset(method_list)
 
+        # 后面的函数不要了 这里只制作数据集 不训练模型
         print('开始训练...')
         model_path = train(train_dataset, validate_dataset, os.path.join(self.root, 'model', self.project))
 
