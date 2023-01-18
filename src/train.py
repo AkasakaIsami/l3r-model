@@ -1,6 +1,7 @@
 import configparser
 import os
 from datetime import datetime
+import time
 
 import torch
 from sklearn.metrics import balanced_accuracy_score, precision_score, recall_score, f1_score, accuracy_score
@@ -54,6 +55,7 @@ def train(train_dataset, validate_dataset, model_path) -> str:
     # 控制日志打印的一些参数
     total_train_step = 0
 
+    start = time.time()
     for epoch in range(EPOCHS):
         print(f'------------第 {epoch + 1} 轮训练开始------------')
 
@@ -143,6 +145,9 @@ def train(train_dataset, validate_dataset, model_path) -> str:
         if balanced_acc > best_acc:
             best_model = model
 
+    end = time.time()
+    print(f"训练完成，共耗时{end - start}秒。最佳balanced accuracy是{best_acc}。现在开始保存数据...")
+
     def save_model(best_model, model_path: str) -> str:
         if not os.path.exists(model_path):
             os.makedirs(model_path)
@@ -152,7 +157,7 @@ def train(train_dataset, validate_dataset, model_path) -> str:
         file_name = 'model_' + time_str + '_' + float_to_percent(balanced_acc) + '.pth'
         save_path = os.path.join(model_path, file_name)
 
-        torch.save(model, save_path)
+        torch.save(best_model, save_path)
         print('模型保存成功！')
         return save_path
 

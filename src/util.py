@@ -111,8 +111,12 @@ def cut_hump(str):
     return "".join(result)
 
 
-def float_to_percent(num) -> str:
-    # 浮点到百分比表示 保留两位小数
+def float_to_percent(num:float) -> str:
+    """
+    浮点到百分比表示 保留两位小数
+    :param num: 要转换的浮点数
+    :return: 百分比表示
+    """
     return "%.2f%%" % (num * 100)
 
 

@@ -1,12 +1,12 @@
-import functools
 import os.path
 import random
 import time
-from typing import Optional, Callable, Union, List, Tuple
+from typing import List
 import numpy as np
 import pydot as pydot
 import torch
 from gensim.models import Word2Vec
+from pandas import Series
 from torch_geometric.data import InMemoryDataset, Data
 from tqdm import tqdm
 
@@ -22,6 +22,9 @@ class SingleProjectDataset(InMemoryDataset):
         self.project = project
         self.methods = methods
         self.ratio = ratio
+
+        self.LOC = 0
+        self.LLOC = 0
 
         super(SingleProjectDataset, self).__init__(root, transform, pre_transform)
 
@@ -47,7 +50,8 @@ class SingleProjectDataset(InMemoryDataset):
         processed_train_path = os.path.join(self.project, "train_.pt")
         processed_dev_path = os.path.join(self.project, "dev_.pt")
         processed_test_path = os.path.join(self.project, "test_.pt")
-        return [self.project, processed_train_path, processed_dev_path, processed_test_path]
+        processed_test_info = os.path.join(self.project, "test_info.pkl")
+        return [self.project, processed_train_path, processed_dev_path, processed_test_path, processed_test_info]
 
     def download(self):
         pass
@@ -178,9 +182,14 @@ class SingleProjectDataset(InMemoryDataset):
                 graph_data = Data.from_dict(graph_data)
                 logged_data_dict[key] = graph_data
 
-        score = len(logged_data_dict) / (len(unlogged_data_dict) + len(logged_data_dict))
+        score1 = len(logged_data_dict) / (len(unlogged_data_dict) + len(logged_data_dict))
+        score2 = self.LLOC / self.LOC
         print(
-            f"完成数据读取，正数据分别是{len(unlogged_data_dict)}和{len(logged_data_dict)}，正样本比例为{float_to_percent(score)}")
+            f"完成数据读取。")
+        print(
+            f"函数级别负正数据是{len(unlogged_data_dict)}和{len(logged_data_dict)}，正样本比例为{float_to_percent(score1)}")
+        print(
+            f"语句级别负正数据是{self.LOC - self.LLOC}和{self.LLOC}，正样本比例为{float_to_percent(score2)}")
 
         def split_data(unlogged_data_dict: dict, logged_data_dict: dict):
             train_datalist = []
@@ -237,7 +246,8 @@ class SingleProjectDataset(InMemoryDataset):
             data, slices = self.collate(test_datalist)
             torch.save((data, slices), self.processed_paths[3])
 
-            # TODO: 函数名的保存以后再写吧！
+            print("saving test info")
+            Series(test_methods).to_pickle(self.processed_paths[4])
 
         train_datalist, dev_datalist, test_datalist, test_methods = split_data(unlogged_data_dict, logged_data_dict)
         print(
@@ -264,8 +274,9 @@ class SingleProjectDataset(InMemoryDataset):
         is_all_negative = True
         y = []
         for node in nodes:
-            label = 'true' in node.get_attributes()['isLogged']
-            if label:
+            self.LOC = self.LOC + 1
+            if 'true' in node.get_attributes()['isLogged']:
+                self.LLOC = self.LLOC + 1
                 y.append([0, 1])
                 is_all_negative = False
             else:
