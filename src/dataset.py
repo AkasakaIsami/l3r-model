@@ -84,6 +84,9 @@ class SingleProjectDataset(InMemoryDataset):
         start = time.time()
         for _, item in enumerate(mbar):
             clz = item[0]
+            if clz.endswith('Test'):
+                continue
+
             method = item[1]
             path = os.path.join(project_root, clz, method)
             mbar.set_postfix_str(f"{clz}.{method}")
@@ -176,7 +179,8 @@ class SingleProjectDataset(InMemoryDataset):
                 logged_data_dict[key] = graph_data
 
         score = len(logged_data_dict) / (len(unlogged_data_dict) + len(logged_data_dict))
-        print(f"完成数据读取，正数据分别是{len(unlogged_data_dict)}和{len(logged_data_dict)}，正样本比例为{float_to_percent(score)}")
+        print(
+            f"完成数据读取，正数据分别是{len(unlogged_data_dict)}和{len(logged_data_dict)}，正样本比例为{float_to_percent(score)}")
 
         def split_data(unlogged_data_dict: dict, logged_data_dict: dict):
             train_datalist = []
