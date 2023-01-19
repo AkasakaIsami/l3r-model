@@ -64,8 +64,8 @@ class SingleProjectDataset(InMemoryDataset):
         processed_test_info = os.path.join(self.project, dir_name, "test_info.pkl")
         processed_dataset_info = os.path.join(self.project, dir_name, 'dataset_info.txt')
 
-        return [os.path.join(self.project, dir_name), processed_train_path, processed_dev_path, processed_test_path, processed_test_info,
-                processed_dataset_info]
+        return [os.path.join(self.project, dir_name), processed_train_path, processed_dev_path, processed_test_path,
+                processed_test_info, processed_dataset_info]
 
     def download(self):
         pass
@@ -97,8 +97,8 @@ class SingleProjectDataset(InMemoryDataset):
                     unit_scale=False,
                     colour="red")
 
-        logged_data_dict = pd.DataFrame(columns=['Name', 'Data', 'LOC', 'LLOC'])
-        unlogged_data_dict = pd.DataFrame(columns=['Name', 'Data', 'LOC', 'LLOC'])
+        logged_data_dict = pd.DataFrame(columns=['Name', 'Data', 'LOC', 'LLOC', 'Lrate'])
+        unlogged_data_dict = pd.DataFrame(columns=['Name', 'Data', 'LOC', 'LLOC', 'Lrate'])
 
         start = time.time()
         for _, item in enumerate(mbar):
@@ -192,13 +192,13 @@ class SingleProjectDataset(InMemoryDataset):
                 del graph_data['is_all_negative']
                 graph_data = Data.from_dict(graph_data)
 
-                temp_data = [key, graph_data, tempLOC, tempLLOC]
+                temp_data = [key, graph_data, tempLOC, tempLLOC, tempLLOC / tempLOC]
                 unlogged_data_dict.loc[len(unlogged_data_dict)] = temp_data
 
             else:
                 del graph_data['is_all_negative']
                 graph_data = Data.from_dict(graph_data)
-                temp_data = [key, graph_data, tempLOC, tempLLOC]
+                temp_data = [key, graph_data, tempLOC, tempLLOC, tempLLOC / tempLOC]
                 logged_data_dict.loc[len(logged_data_dict)] = temp_data
 
         score1 = len(logged_data_dict) / (len(unlogged_data_dict) + len(logged_data_dict))
@@ -244,6 +244,8 @@ class SingleProjectDataset(InMemoryDataset):
             train_split_logged = int(ratios[0] / sum(ratios) * n_logged)
             val_split_logged = train_split_logged + int(ratios[1] / sum(ratios) * n_logged)
 
+            # 抽之前先根据日志率排下序 训练集正样本尽量多一些
+            logged_data_dict = logged_data_dict.sort_values('Lrate', ascending=False)
             train_datalist.extend(logged_data_dict[:train_split_logged]['Data'].tolist())
             dev_datalist.extend(logged_data_dict[train_split_logged:val_split_logged]['Data'].tolist())
             test_datalist.extend(logged_data_dict[val_split_logged:]['Data'].tolist())
@@ -253,8 +255,9 @@ class SingleProjectDataset(InMemoryDataset):
             test_LLOC = logged_data_dict[val_split_logged:]['LLOC'].sum()
 
             # 因为是根据标签顺序拼接的 所以打乱一下train_datalist 和 dev_datalist
-            random.shuffle(train_datalist)
-            random.shuffle(dev_datalist)
+            # 还打乱个屁！
+            # random.shuffle(train_datalist)
+            # random.shuffle(dev_datalist)
 
             return train_datalist, dev_datalist, test_datalist, test_methods, test_LOC, test_LLOC
 
