@@ -37,6 +37,8 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
     BATCH_SIZE = cf.getint('train', 'batchSize')
 
     LR = cf.getfloat('train', 'learningRate')
+    ALPHA = cf.getfloat('train', 'alpha')
+    GAMMA = cf.getfloat('train', 'gamma')
 
     C_NUM_LAYERS = cf.getint('train', 'STClassifierNumLayers')
     E_NUM_LAYERS = cf.getint('train', 'STEncoderNumLayers')
@@ -116,7 +118,7 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
 
             y_hat = model(data)
             y = data.y.float()
-            loss = loss_function(y_hat, y, alpha=0.75, gamma=1.5, reduction="mean")
+            loss = loss_function(y_hat, y, alpha=ALPHA, gamma=GAMMA, reduction="mean")
 
             optimizer.zero_grad()
             loss.backward()
@@ -156,7 +158,7 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
                 y_hat_total = torch.cat([y_hat_total, y_hat_trans])
                 y_total = torch.cat([y_total, y_trans])
 
-                loss = loss_function(y_hat, y, alpha=0.75, gamma=1.5, reduction='mean')
+                loss = loss_function(y_hat, y, alpha=ALPHA, gamma=GAMMA, reduction='mean')
                 total_val_loss += loss.item()
 
         print(f"验证集整体Loss: {total_val_loss}")
