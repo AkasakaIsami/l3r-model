@@ -4,16 +4,16 @@ from torch_geometric.nn import Sequential, GATConv, BatchNorm, MLP, TopKPooling,
 
 
 class StatementClassfier(nn.Module):
-    def __init__(self, embedding_dim=128, encode_dim=128, hidden_dim=32, num_layers=3, dropout=0.2,
-                 use_gpu=False) -> None:
+    def __init__(self, embedding_dim=128, encode_dim=128, hidden_dim=32, encoder_num_layers=2, classifier_num_layers=3,
+                 dropout=0.2, use_gpu=False) -> None:
         super().__init__()
 
-        self.embedding_dim = embedding_dim  # 128
-        self.encode_dim = encode_dim  # 128
-
-        self.hidden_dim = hidden_dim  # 也128吧
-        self.num_layers = num_layers  # 3层？
-        self.dropout = dropout  # 0.2吧
+        self.embedding_dim = embedding_dim
+        self.encode_dim = encode_dim
+        self.hidden_dim = hidden_dim
+        self.encoder_num_layers = encoder_num_layers
+        self.classifier_num_layers = classifier_num_layers
+        self.dropout = dropout
 
         self.gpu = use_gpu
 

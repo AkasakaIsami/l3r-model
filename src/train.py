@@ -6,6 +6,7 @@ import time
 import torch
 from sklearn.metrics import balanced_accuracy_score, precision_score, recall_score, f1_score, accuracy_score
 from torch_geometric.loader import DataLoader
+from torchinfo import summary
 from torchvision.ops import sigmoid_focal_loss
 
 from model import StatementClassfier
@@ -16,7 +17,16 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def train(train_dataset, validate_dataset, model_path) -> str:
+def train(train_dataset, validate_dataset, model_path) -> (str, str):
+    """
+    开始训练的函数，输入训练集和验证集就能开始训练了
+
+    :param train_dataset: 训练集
+    :param validate_dataset: 验证集
+    :param model_path: 最佳模型的保存目录
+    :return: 模型文件路径 记录训练信息的日志文件路径
+    """
+
     # 读取一些超参
     cf = configparser.ConfigParser()
     cf.read('config.ini')
@@ -24,22 +34,60 @@ def train(train_dataset, validate_dataset, model_path) -> str:
     EPOCHS = cf.getint('train', 'epoch')
     BATCH_SIZE = cf.getint('train', 'batchSize')
 
-    HIDDEN_DIM = cf.getint('train', 'hiddenDIM')
-    ENCODE_DIM = cf.getint('train', 'encodeDIM')
+    LR = cf.getfloat('train', 'learningRate')
+
     C_NUM_LAYERS = cf.getint('train', 'STClassifierNumLayers')
     E_NUM_LAYERS = cf.getint('train', 'STEncoderNumLayers')
+
+    HIDDEN_DIM = cf.getint('train', 'hiddenDIM')
+    ENCODE_DIM = cf.getint('train', 'encodeDIM')
+
     DROP = cf.getfloat('train', 'dropout')
 
     USE_GPU = cf.getboolean('environment', 'useGPU') and torch.cuda.is_available()
 
+    # 在正式开始训练前，先设置一下日志持久化的配置
+    if not os.path.exists(model_path):
+        os.makedirs(model_path)
+    start_time = datetime.now()
+    start_time_str = datetime.strftime(start_time, '%Y-%m-%d_%H:%M:%S')
+
+    # 定义日志保存文件
+    record_file_name = start_time_str + 'train_info_' + '.txt'
+    record_file = open(os.path.join(model_path, record_file_name), 'w')
+    record_file.write(f"本次实验开始时间：{start_time_str}\n")
+
+    record_file.write(f"数据集信息如下：\n")
+    record_file.write(f"    - 训练集函数级数据量：{len(train_dataset)}\n")
+    record_file.write(f"    - 训练集函数级正样本比例：{len(train_dataset)}\n")
+    record_file.write(f"    - 验证集函数级数据量：{-1}\n")
+    record_file.write(f"    - 验证集函数级正样本比例：{-1}\n")
+
+    record_file.write(f"    - 训练集语句级数据量：{-1}\n")
+    record_file.write(f"    - 训练集语句级正样本比例：{-1}\n")
+    record_file.write(f"    - 验证集语句级数据量：{-1}\n")
+    record_file.write(f"    - 验证集语句级正样本比例：{-1}\n")
+
+    record_file.write(f"模型配置如下：\n")
+    record_file.write(f"    - EPOCHS：{EPOCHS}\n")
+    record_file.write(f"    - BATCH_SIZE：{BATCH_SIZE}\n")
+    record_file.write(f"    - LEARNING_RATE：{LR}\n")
+    record_file.write(f"    - 语句编码器层数：{E_NUM_LAYERS}\n")
+    record_file.write(f"    - 语句编码维度：{ENCODE_DIM}\n")
+    record_file.write(f"    - 语句分类器层数：{C_NUM_LAYERS}\n")
+    record_file.write(f"    - 隐藏层维度：{HIDDEN_DIM}\n")
+    record_file.write(f"    - dropout率：{DROP}\n")
+
+    # 正式开始训练！
     train_loader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     dev_loader = DataLoader(dataset=validate_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
     # 训练的配置
-    model = StatementClassfier(encode_dim=ENCODE_DIM, hidden_dim=HIDDEN_DIM, num_layers=C_NUM_LAYERS, dropout=DROP,
+    model = StatementClassfier(encode_dim=ENCODE_DIM, hidden_dim=HIDDEN_DIM, encoder_num_layers=ENCODE_DIM,
+                               classifier_num_layers=C_NUM_LAYERS, dropout=DROP,
                                use_gpu=USE_GPU)
     parameters = model.parameters()
-    optimizer = torch.optim.Adamax(parameters)
+    optimizer = torch.optim.Adam(parameters, lr=LR)
     loss_function = sigmoid_focal_loss
 
     if USE_GPU:
@@ -47,6 +95,9 @@ def train(train_dataset, validate_dataset, model_path) -> str:
         使用GPU的话，model需要转cuda
         '''
         model = model.cuda()
+
+    record_file.write(f"模型结构如下：\n")
+    record_file.write(str(summary(model)) + '\n')
 
     # 用于寻找效果最好的模型
     best_acc = 0.0
@@ -56,8 +107,10 @@ def train(train_dataset, validate_dataset, model_path) -> str:
     total_train_step = 0
 
     start = time.time()
+    record_file.write(f"开始训练！\n")
     for epoch in range(EPOCHS):
         print(f'------------第 {epoch + 1} 轮训练开始------------')
+        record_file.write(f'------------第 {epoch + 1} 轮训练开始------------\n')
 
         model.train()
         for i, data in enumerate(train_loader):
@@ -66,8 +119,7 @@ def train(train_dataset, validate_dataset, model_path) -> str:
 
             y_hat = model(data)
             y = data.y.float()
-            # FIXME: 要关注正样本的话，alpha到底应该设置成>0.5还是<0.5？
-            loss = loss_function(y_hat, y, alpha=0.75, reduction="mean")
+            loss = loss_function(y_hat, y, alpha=0.75, gamma=1.5, reduction="mean")
 
             optimizer.zero_grad()
             loss.backward()
@@ -77,19 +129,11 @@ def train(train_dataset, validate_dataset, model_path) -> str:
             if total_train_step % 1 == 0:
                 print(f"训练次数: {total_train_step}, Loss: {loss.item()}")
 
-        # 验证集用以下几个指标为超参调整提供参考：
-        #   1. Loss 验证集中所有数据表现出的损失值Loss
-        #   2. Accuracy 准确率
-        #   3. Balanced Accuracy 均衡准确率
-        #   4. Precision
-        #   5. Recall
-        #   6. F1
+            if total_train_step % 50 == 0:
+                record_file.write(f"训练次数: {total_train_step}, Loss: {loss.item()}\n")
 
         total_val_loss = 0.0
-        total_acc = 0.0
-        val_data_size = 0
 
-        # 但指标得把验证集上所有数据拼在一起来训练
         y_hat_total = torch.randn(0)
         y_total = torch.randn(0)
 
@@ -112,22 +156,14 @@ def train(train_dataset, validate_dataset, model_path) -> str:
                 y_hat_trans = y_hat.argmax(1)
                 y_trans = y.argmax(1)
 
-                # 拼接
                 y_hat_total = torch.cat([y_hat_total, y_hat_trans])
                 y_total = torch.cat([y_total, y_trans])
 
-                loss = loss_function(y_hat, y, alpha=0.75, reduction='mean')
+                loss = loss_function(y_hat, y, alpha=0.75, gamma=1.5, reduction='mean')
                 total_val_loss += loss.item()
 
-                val_data_size = val_data_size + len(y)
-                acc = (y_hat_trans == y_trans).sum()
-                total_acc = total_acc + acc
-
         print(f"验证集整体Loss: {total_val_loss}")
-
-        total_acc = total_acc / val_data_size
-        total_acc_str = "%.2f%%" % (total_acc * 100)
-        print(f"验证集Accuracy: {total_acc_str}")
+        record_file.write(f"验证集整体Loss: {total_val_loss}\n")
 
         acc = accuracy_score(y_total.cpu(), y_hat_total.cpu())
         balanced_acc = balanced_accuracy_score(y_total.cpu(), y_hat_total.cpu())
@@ -141,24 +177,31 @@ def train(train_dataset, validate_dataset, model_path) -> str:
         print(f"验证集 recall_score: {float_to_percent(rc)}")
         print(f"验证集 f1_score: {float_to_percent(f1)}")
 
+        record_file.write(f"验证集 accuracy_score: {float_to_percent(acc)}\n")
+        record_file.write(f"验证集 balanced_accuracy_score: {float_to_percent(balanced_acc)}\n")
+        record_file.write(f"验证集 precision_score: {float_to_percent(ps)}\n")
+        record_file.write(f"验证集 recall_score: {float_to_percent(rc)}\n")
+        record_file.write(f"验证集 f1_score: {float_to_percent(f1)}\n")
+
         # 主要看balanced_accuracy_score
         if balanced_acc > best_acc:
+            record_file.write(f"***当前模型的平衡准确率表现最好，被记为表现最好的模型***\n")
             best_model = model
+            best_acc = balanced_acc
 
     end = time.time()
-    print(f"训练完成，共耗时{end - start}秒。最佳balanced accuracy是{best_acc}。现在开始保存数据...")
+    print(f"训练完成，共耗时{end - start}秒。最佳balanced accuracy是{float_to_percent(best_acc)}。现在开始保存数据...")
+    record_file.write(f"训练完成，共耗时{end - start}秒。最佳balanced accuracy是{best_acc}\n")
+    record_file.write(
+        f"——————————只有看到这条语句，并且对应的模型文件也成功保存了，这个日志文件的内容才有效！（不然就是中断了）——————————")
 
-    def save_model(best_model, model_path: str) -> str:
-        if not os.path.exists(model_path):
-            os.makedirs(model_path)
-
-        curr_time = datetime.now()
-        time_str = datetime.strftime(curr_time, '%Y-%m-%d_%H:%M:%S')
-        file_name = 'model_' + time_str + '_' + float_to_percent(balanced_acc) + '.pth'
+    def save_model(best_model, model_path: str, time_str) -> str:
+        file_name = time_str + '_model@' + float_to_percent(best_acc) + '.pth'
         save_path = os.path.join(model_path, file_name)
 
         torch.save(best_model, save_path)
         print('模型保存成功！')
         return save_path
 
-    return save_model(best_model, model_path)
+    model_file = save_model(best_model, model_path, start_time_str)
+    return model_file

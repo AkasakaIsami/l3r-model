@@ -48,7 +48,7 @@ class Pipeline:
         corpus_file_path = os.path.join(self.src_path, project, project + '_corpus.txt')
         model_file_name = project + "_w2v_" + str(embedding_size) + '.model'
 
-        if os.path.exists(model_file_name):
+        if os.path.exists(os.path.join(self.src_path, project, model_file_name)):
             return
 
         from gensim.models import word2vec
@@ -96,7 +96,16 @@ class Pipeline:
 
         return data
 
-    def make_dataset(self, methods):
+    def make_dataset(self, methods, drop=0):
+        """
+        根据所有函数的名称制作数据集
+        默认保留所有不包含日志的函数
+        可以设置丢弃一部分不包含日志的函数
+
+        :param methods: 函数列表
+        :param drop: 要丢掉多少比例不包含日志的函数
+        :return: 返回结果
+        """
         train_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="train",
                                              methods=methods,
                                              ratio=self.ratio)
@@ -118,14 +127,14 @@ class Pipeline:
 
         print('制作数据集...')
         # 这里开始不一样了 切分数据集的工作交给DataSet去做
-        train_dataset, validate_dataset, test_dataset = self.make_dataset(method_list)
+        train_dataset, validate_dataset, test_dataset = self.make_dataset(method_list, drop=0)
 
         # 后面的函数不要了 这里只制作数据集 不训练模型
         print('开始训练...')
-        model_path = train(train_dataset, validate_dataset, os.path.join(self.root, 'model', self.project))
+        model_file = train(train_dataset, validate_dataset, os.path.join(self.root, 'model', self.project))
 
         print('开始测试...')
-        test(model_path, test_dataset)
+        test(model_file, test_dataset)
 
 
 if __name__ == '__main__':
@@ -135,6 +144,7 @@ if __name__ == '__main__':
     ratio = cf.get('data', 'datasetRadio')
     project_name = cf.get('data', 'projectName')
     data_src = cf.get('data', 'dataSrc')
+    embedding_size = cf.get('train', 'embeddingDIM')
 
     ppl = Pipeline(ratio=ratio, project=project_name, root=data_src)
     ppl.run()
