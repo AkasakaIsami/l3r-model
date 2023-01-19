@@ -3,10 +3,10 @@ import random
 import time
 from typing import List
 import numpy as np
+import pandas as pd
 import pydot as pydot
 import torch
 from gensim.models import Word2Vec
-from pandas import Series
 from torch_geometric.data import InMemoryDataset, Data
 from tqdm import tqdm
 
@@ -16,12 +16,13 @@ from util import cut_word, random_unit, float_to_percent
 class SingleProjectDataset(InMemoryDataset):
 
     def __init__(self, root, transform=None, pre_transform=None, project=None, dataset_type="train",
-                 methods=None, ratio='8:1:1'):
+                 methods=None, ratio='8:1:1', drop=0):
         self.word2vec = None
         self.embeddings = None
         self.project = project
         self.methods = methods
         self.ratio = ratio
+        self.drop = drop
 
         self.LOC = 0
         self.LLOC = 0
@@ -47,17 +48,39 @@ class SingleProjectDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self) -> List[str]:
-        processed_train_path = os.path.join(self.project, "train_.pt")
-        processed_dev_path = os.path.join(self.project, "dev_.pt")
-        processed_test_path = os.path.join(self.project, "test_.pt")
-        processed_test_info = os.path.join(self.project, "test_info.pkl")
-        return [self.project, processed_train_path, processed_dev_path, processed_test_path, processed_test_info]
+        """
+        一份完整的数据集要包括以下5个文件
+            1. 存储指定全负类别函数丢弃率的文件夹 存着训练数据集
+            2. 同上 存着验证数据集
+            3. 同上 存着测试数据集
+            4. 同上 一份记录测试集内所有函数信息的文件
+            5. 同上 一份记录当前数据集的详细配置的txt文件
+        :return:
+        """
+        dir_name = 'abandon@' + float_to_percent(self.drop)
+        processed_train_path = os.path.join(self.project, dir_name, "train_.pt")
+        processed_dev_path = os.path.join(self.project, dir_name, "dev_.pt")
+        processed_test_path = os.path.join(self.project, dir_name, "test_.pt")
+        processed_test_info = os.path.join(self.project, dir_name, "test_info.pkl")
+        processed_dataset_info = os.path.join(self.project, dir_name, 'dataset_info.txt')
+
+        return [os.path.join(self.project, dir_name), processed_train_path, processed_dev_path, processed_test_path, processed_test_info,
+                processed_dataset_info]
 
     def download(self):
         pass
 
     def process(self):
+
         project_root = self.raw_paths[0]
+
+        if not os.path.exists(self.processed_paths[0]):
+            os.makedirs(self.processed_paths[0])
+
+        record_file = open(self.processed_paths[5], 'w')
+        record_file.write(f"本次数据集目标系统：{self.project}\n")
+        record_file.write(f"    -函数总量：{len(self.methods)}\n")
+        record_file.write(f"    -全负函数丢弃率：{float_to_percent(self.drop)}\n")
 
         # 先导入词嵌入矩阵
         word2vec_path = os.path.join(project_root, self.project + '_w2v_128.model')
@@ -74,16 +97,8 @@ class SingleProjectDataset(InMemoryDataset):
                     unit_scale=False,
                     colour="red")
 
-        # 逻辑就是不再像之前一样分成三份分别做
-        # 而是做成一大份
-        # 但这一大份会被分成两小份
-        # 一份里面全装没日志的函数
-        # 还有一份里装有日志的函数
-        # 做完这一大份 再去分三份
-
-        # 这里不存data列表而存字典是因为要知道每条数据对应哪个函数
-        logged_data_dict = {}
-        unlogged_data_dict = {}
+        logged_data_dict = pd.DataFrame(columns=['Name', 'Data', 'LOC', 'LLOC'])
+        unlogged_data_dict = pd.DataFrame(columns=['Name', 'Data', 'LOC', 'LLOC'])
 
         start = time.time()
         for _, item in enumerate(mbar):
@@ -96,8 +111,6 @@ class SingleProjectDataset(InMemoryDataset):
             mbar.set_postfix_str(f"{clz}.{method}")
 
             files = os.listdir(path)
-            # 这里的优化是 强制先解析函数文件
-            # 如果是无日志的函数 40%概率丢弃这条数据
 
             graph_data = {}
 
@@ -117,12 +130,14 @@ class SingleProjectDataset(InMemoryDataset):
             method_graphs = pydot.graph_from_dot_file(method_graph_path)
             method_graph = method_graphs[0]
 
-            is_all_negative, x, cfg_edge_index, dfg_edge_index, y = self.process_method_dot(method_graph)
+            tempLOC, tempLLOC, x, cfg_edge_index, dfg_edge_index, y = self.process_method_dot(method_graph)
+            self.LOC = self.LOC + tempLOC
+            self.LLOC = self.LLOC + tempLLOC
+            is_all_negative = tempLLOC == 0
 
-            # 如果is_all_negative是True，意味着当前函数不存在日志语句
-            # 30%的概率丢弃当前函数
+            # 30%的概率丢弃不存在日志语句的函数
             if is_all_negative:
-                if random_unit(0.5):
+                if random_unit(self.drop):
                     continue
 
             # 这个语句在最后将单条数据添加到数据集的时候要用 训练的时候不用
@@ -176,11 +191,15 @@ class SingleProjectDataset(InMemoryDataset):
             if graph_data['is_all_negative']:
                 del graph_data['is_all_negative']
                 graph_data = Data.from_dict(graph_data)
-                unlogged_data_dict[key] = graph_data
+
+                temp_data = [key, graph_data, tempLOC, tempLLOC]
+                unlogged_data_dict.loc[len(unlogged_data_dict)] = temp_data
+
             else:
                 del graph_data['is_all_negative']
                 graph_data = Data.from_dict(graph_data)
-                logged_data_dict[key] = graph_data
+                temp_data = [key, graph_data, tempLOC, tempLLOC]
+                logged_data_dict.loc[len(logged_data_dict)] = temp_data
 
         score1 = len(logged_data_dict) / (len(unlogged_data_dict) + len(logged_data_dict))
         score2 = self.LLOC / self.LOC
@@ -191,12 +210,21 @@ class SingleProjectDataset(InMemoryDataset):
         print(
             f"语句级别负正数据是{self.LOC - self.LLOC}和{self.LLOC}，正样本比例为{float_to_percent(score2)}")
 
-        def split_data(unlogged_data_dict: dict, logged_data_dict: dict):
+        record_file.write(f"总数据量信息：\n")
+        record_file.write(f"    -函数级别负数据量：{len(unlogged_data_dict)}\n")
+        record_file.write(f"    -函数级别正数据量：{len(logged_data_dict)}\n")
+        record_file.write(f"    -函数级别正样本比例：{float_to_percent(score1)}\n")
+
+        record_file.write(f"    -语句级别负数据量：{self.LOC - self.LLOC}\n")
+        record_file.write(f"    -语句级别正数据量：{self.LLOC}\n")
+        record_file.write(f"    -语句级别正样本比例：{float_to_percent(score2)}\n")
+
+        def split_data(unlogged_data_dict: pd.DataFrame, logged_data_dict: pd.DataFrame):
             train_datalist = []
             dev_datalist = []
             test_datalist = []
 
-            test_methods = []
+            test_methods = pd.DataFrame(columns=['Name', 'Data', 'LOC', 'LLOC'])
 
             ratios = [int(r) for r in self.ratio.split(':')]
 
@@ -205,31 +233,36 @@ class SingleProjectDataset(InMemoryDataset):
 
             train_split_unlogged = int(ratios[0] / sum(ratios) * n_unlogged)
             val_split_unlogged = train_split_unlogged + int(ratios[1] / sum(ratios) * n_unlogged)
-            train_datalist.extend(list(unlogged_data_dict.values())[:train_split_unlogged])
-            dev_datalist.extend(list(unlogged_data_dict.values())[train_split_unlogged:val_split_unlogged])
-            test_datalist.extend(list(unlogged_data_dict.values())[val_split_unlogged:])
-            test_methods.extend(list(unlogged_data_dict.keys())[val_split_unlogged:])
+
+            train_datalist.extend(unlogged_data_dict[:train_split_unlogged]['Data'].tolist())
+            dev_datalist.extend(unlogged_data_dict[train_split_unlogged:val_split_unlogged]['Data'].tolist())
+            test_datalist.extend(unlogged_data_dict[val_split_unlogged:]['Data'].tolist())
+            test_methods.append(unlogged_data_dict[val_split_unlogged:])
+            # test集需要统计一下LOC
+            test_LOC = unlogged_data_dict[val_split_unlogged:]['LOC'].sum()
 
             train_split_logged = int(ratios[0] / sum(ratios) * n_logged)
             val_split_logged = train_split_logged + int(ratios[1] / sum(ratios) * n_logged)
-            train_datalist.extend(list(logged_data_dict.values())[:train_split_logged])
-            dev_datalist.extend(list(logged_data_dict.values())[train_split_logged:val_split_logged])
-            test_datalist.extend(list(logged_data_dict.values())[val_split_logged:])
-            test_methods.extend(list(logged_data_dict.keys())[val_split_logged:])
+
+            train_datalist.extend(logged_data_dict[:train_split_logged]['Data'].tolist())
+            dev_datalist.extend(logged_data_dict[train_split_logged:val_split_logged]['Data'].tolist())
+            test_datalist.extend(logged_data_dict[val_split_logged:]['Data'].tolist())
+            test_methods.append(logged_data_dict[val_split_logged:])
+            # test集需要统计一下LOC和LLOC
+            test_LOC += logged_data_dict[val_split_logged:]['LOC'].sum()
+            test_LLOC = logged_data_dict[val_split_logged:]['LLOC'].sum()
 
             # 因为是根据标签顺序拼接的 所以打乱一下train_datalist 和 dev_datalist
             random.shuffle(train_datalist)
             random.shuffle(dev_datalist)
 
-            return train_datalist, dev_datalist, test_datalist, test_methods
+            return train_datalist, dev_datalist, test_datalist, test_methods, test_LOC, test_LLOC
 
-        def save_data(train_datalist: list, dev_datalist: list, test_datalist: list, test_methods: list):
+        def save_data(train_datalist: list, dev_datalist: list, test_datalist: list, test_methods: pd.DataFrame):
             # 2023.01.11 2:46 am 感谢维饶帮我debug到凌晨三点
             # 特写此注释 以表感谢
             # 等你回上海 我请你吃生蚝鸡煲
             # 没有阴阳怪气！！
-            if not os.path.exists(self.processed_paths[0]):
-                os.makedirs(self.processed_paths[0])
 
             end = time.time()
             print(f"数据集制作完成，共耗时{end - start}秒。现在开始保存数据...")
@@ -247,11 +280,16 @@ class SingleProjectDataset(InMemoryDataset):
             torch.save((data, slices), self.processed_paths[3])
 
             print("saving test info")
-            Series(test_methods).to_pickle(self.processed_paths[4])
+            test_methods.to_pickle(self.processed_paths[4])
 
-        train_datalist, dev_datalist, test_datalist, test_methods = split_data(unlogged_data_dict, logged_data_dict)
+        train_datalist, dev_datalist, test_datalist, test_methods, test_LOC, test_LLOC = split_data(unlogged_data_dict,
+                                                                                                    logged_data_dict)
         print(
             f"完成数据集切分，训练集数据量{len(train_datalist)},验证集数据量{len(dev_datalist)},测试集数据量{len(test_datalist)}")
+        record_file.write(
+            f"完成数据集切分，训练集数据量{len(train_datalist)},验证集数据量{len(dev_datalist)},测试集数据量{len(test_datalist)}\n")
+        record_file.write(
+            f"测试集中共语句{test_LOC}个，其中正样本语句{test_LLOC}个，语句日志率{float_to_percent(test_LLOC / test_LOC)}")
         save_data(train_datalist, dev_datalist, test_datalist, test_methods)
 
     def process_method_dot(self, graph):
@@ -271,14 +309,14 @@ class SingleProjectDataset(InMemoryDataset):
         # x: n * 128
         x = torch.zeros([node_num, 128], dtype=torch.float)
 
-        is_all_negative = True
+        tempLOC = 0
+        tempLLOC = 0
         y = []
         for node in nodes:
-            self.LOC = self.LOC + 1
+            tempLOC = tempLOC + 1
             if 'true' in node.get_attributes()['isLogged']:
-                self.LLOC = self.LLOC + 1
+                tempLLOC = tempLLOC + 1
                 y.append([0, 1])
-                is_all_negative = False
             else:
                 y.append([1, 0])
 
@@ -316,7 +354,7 @@ class SingleProjectDataset(InMemoryDataset):
         cfg_edge_index = torch.cat([edge_0_cfg, edge_1_cfg], dim=0)
         dfg_edge_index = torch.cat([edge_0_dfg, edge_1_dfg], dim=0)
 
-        return is_all_negative, x, cfg_edge_index, dfg_edge_index, y
+        return tempLOC, tempLLOC, x, cfg_edge_index, dfg_edge_index, y
 
     def process_statement_dot(self, graph):
         """

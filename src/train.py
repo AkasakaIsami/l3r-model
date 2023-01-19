@@ -17,14 +17,16 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def train(train_dataset, validate_dataset, model_path) -> (str, str):
+def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (str, str):
     """
     开始训练的函数，输入训练集和验证集就能开始训练了
 
     :param train_dataset: 训练集
     :param validate_dataset: 验证集
     :param model_path: 最佳模型的保存目录
+    :param data_info: 记录了数据集信息的文件位置
     :return: 模型文件路径 记录训练信息的日志文件路径
+
     """
 
     # 读取一些超参
@@ -57,16 +59,11 @@ def train(train_dataset, validate_dataset, model_path) -> (str, str):
     record_file = open(os.path.join(model_path, record_file_name), 'w')
     record_file.write(f"本次实验开始时间：{start_time_str}\n")
 
-    record_file.write(f"数据集信息如下：\n")
+    record_file.write(f"数据集信息如下：(更多信息请到{data_info}中查看)\n")
     record_file.write(f"    - 训练集函数级数据量：{len(train_dataset)}\n")
     record_file.write(f"    - 训练集函数级正样本比例：{len(train_dataset)}\n")
     record_file.write(f"    - 验证集函数级数据量：{-1}\n")
     record_file.write(f"    - 验证集函数级正样本比例：{-1}\n")
-
-    record_file.write(f"    - 训练集语句级数据量：{-1}\n")
-    record_file.write(f"    - 训练集语句级正样本比例：{-1}\n")
-    record_file.write(f"    - 验证集语句级数据量：{-1}\n")
-    record_file.write(f"    - 验证集语句级正样本比例：{-1}\n")
 
     record_file.write(f"模型配置如下：\n")
     record_file.write(f"    - EPOCHS：{EPOCHS}\n")
