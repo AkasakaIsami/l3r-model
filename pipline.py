@@ -6,6 +6,7 @@ import torch
 from pandas import Series
 
 from dataset import SingleProjectDataset
+from test import test
 from train import train
 
 '''
@@ -17,7 +18,7 @@ from train import train
 
 class Pipeline:
 
-    def __init__(self, ratio: str, project: str, root: str, drop: float):
+    def __init__(self, ratio: str, project: str, root: str):
         self.root = root
         self.src_path = os.path.join(root, 'raw')
         self.target_path = os.path.join(root, 'processed')
@@ -33,7 +34,6 @@ class Pipeline:
         self.embedding_size = None
         self.ratio = ratio
         self.project = project
-        self.drop = drop
 
     def dictionary_and_embedding(self, project, embedding_size):
         """
@@ -96,7 +96,7 @@ class Pipeline:
 
         return data
 
-    def make_dataset(self, methods, drop):
+    def make_dataset(self, methods):
         """
         根据所有函数的名称制作数据集
         默认保留所有不包含日志的函数
@@ -109,13 +109,16 @@ class Pipeline:
         cf = configparser.ConfigParser()
         cf.read('config.ini')
         negative_ratio = cf.getint('data', 'negativeRatio')
+        drop = cf.getfloat('data', 'drop')
 
         train_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="train",
-                                             methods=methods, ratio=self.ratio, drop=drop,negative_ratio = negative_ratio)
+                                             methods=methods, ratio=self.ratio, drop=drop,
+                                             negative_ratio=negative_ratio)
         # 第一次获取的时候就创建好了 所以不用再传了
         validate_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="validate",
-                                                drop=drop,negative_ratio = negative_ratio)
-        test_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="test", drop=drop,negative_ratio = negative_ratio)
+                                                drop=drop, negative_ratio=negative_ratio)
+        test_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="test", drop=drop,
+                                            negative_ratio=negative_ratio)
         print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
         return train_dataset, validate_dataset, test_dataset, train_dataset.processed_paths[5]
 
@@ -130,15 +133,18 @@ class Pipeline:
 
         print('制作数据集...')
         # 这里开始不一样了 切分数据集的工作交给DataSet去做
-        train_dataset, validate_dataset, test_dataset, dataset_info = self.make_dataset(method_list, self.drop)
+        train_dataset, validate_dataset, test_dataset, dataset_info = self.make_dataset(method_list)
 
         # 后面的函数不要了 这里只制作数据集 不训练模型
         print('开始训练...')
-        model_file = train(train_dataset, validate_dataset, os.path.join(self.root, 'model', self.project),
+        model = train(train_dataset, validate_dataset, os.path.join(self.root, 'model', self.project),
                            dataset_info)
 
         print('开始测试...')
-        # test(model_file, test_dataset)
+        # model_file要指定完整路径
+
+        # model_file = ''
+        test(model, test_dataset)
 
 
 if __name__ == '__main__':
@@ -148,7 +154,6 @@ if __name__ == '__main__':
     ratio = cf.get('data', 'datasetRadio')
     project_name = cf.get('data', 'projectName')
     data_src = cf.get('data', 'dataSrc')
-    drop = cf.getfloat('data', 'drop')
 
-    ppl = Pipeline(ratio=ratio, project=project_name, root=data_src, drop=drop)
+    ppl = Pipeline(ratio=ratio, project=project_name, root=data_src)
     ppl.run()

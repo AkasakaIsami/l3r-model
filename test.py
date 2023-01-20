@@ -2,7 +2,8 @@ import configparser
 
 import torch
 from torch_geometric.loader import DataLoader
-from sklearn.metrics import recall_score, precision_score, balanced_accuracy_score, f1_score, accuracy_score
+from sklearn.metrics import recall_score, precision_score, balanced_accuracy_score, f1_score, accuracy_score, \
+    confusion_matrix
 
 from util import float_to_percent
 import warnings
@@ -10,7 +11,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def test(model_path, test_dataset):
+def test(model, test_dataset):
     """
     有几个指标
         1. Accuracy 准确率
@@ -25,12 +26,11 @@ def test(model_path, test_dataset):
     :return:
     """
 
-    model = torch.load(model_path)
-
     cf = configparser.ConfigParser()
     cf.read('config.ini')
     BATCH_SIZE = cf.getint('train', 'batchSize')
     USE_GPU = cf.getboolean('environment', 'useGPU') and torch.cuda.is_available()
+    HAVE_TO_SAMPLE = cf.getint('data', 'negativeRatio') > 0
 
     test_loader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
@@ -50,6 +50,17 @@ def test(model_path, test_dataset):
 
             y = data.y
 
+            if HAVE_TO_SAMPLE:
+                sample = data['sample']
+                size = sample.shape[0]
+                indices = []
+                for i in range(size):
+                    if sample[i] == 1:
+                        indices.append(i)
+
+                y_hat = torch.index_select(y_hat, dim=0, index=torch.tensor(indices))
+                y = torch.index_select(y, dim=0, index=torch.tensor(indices))
+
             if USE_GPU:
                 y = y.cpu()
 
@@ -65,9 +76,12 @@ def test(model_path, test_dataset):
     ps = precision_score(y_total, y_hat_total)
     rc = recall_score(y_total, y_hat_total)
     f1 = f1_score(y_total, y_hat_total)
+    c = confusion_matrix(y_total, y_hat_total, labels=[0, 1])
 
     print(f"测试集 accuracy_score: {float_to_percent(acc)}")
     print(f"测试集 balanced_accuracy_score: {float_to_percent(balanced_acc)}")
     print(f"测试集 precision_score: {float_to_percent(ps)}")
     print(f"测试集 recall_score: {float_to_percent(rc)}")
     print(f"测试集 f1_score: {float_to_percent(f1)}")
+    print(f"测试集 混淆矩阵:\n {c}")
+

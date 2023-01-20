@@ -4,7 +4,8 @@ from datetime import datetime
 import time
 
 import torch
-from sklearn.metrics import balanced_accuracy_score, precision_score, recall_score, f1_score, accuracy_score
+from sklearn.metrics import balanced_accuracy_score, precision_score, recall_score, f1_score, accuracy_score, \
+    confusion_matrix
 from torch_geometric.loader import DataLoader
 from torchinfo import summary
 from torchvision.ops import sigmoid_focal_loss
@@ -17,7 +18,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (str, str):
+def train(train_dataset, validate_dataset, model_path: str, data_info: str):
     """
     开始训练的函数，输入训练集和验证集就能开始训练了
 
@@ -25,7 +26,7 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
     :param validate_dataset: 验证集
     :param model_path: 最佳模型的保存目录
     :param data_info: 记录了数据集信息的文件位置
-    :return: 模型文件路径 记录训练信息的日志文件路径
+    :return: 模型
 
     """
 
@@ -49,6 +50,7 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
     DROP = cf.getfloat('train', 'dropout')
 
     USE_GPU = cf.getboolean('environment', 'useGPU') and torch.cuda.is_available()
+    HAVE_TO_SAMPLE = cf.getint('data', 'negativeRatio') > 0
 
     # 在正式开始训练前，先设置一下日志持久化的配置
     if not os.path.exists(model_path):
@@ -64,8 +66,8 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
     record_file.write(f"数据集信息如下：(更多信息请到{data_info}中查看)\n")
     record_file.write(f"    - 训练集函数级数据量：{len(train_dataset)}\n")
     record_file.write(f"    - 训练集函数级正样本比例：{len(train_dataset)}\n")
-    record_file.write(f"    - 验证集函数级数据量：{-1}\n")
-    record_file.write(f"    - 验证集函数级正样本比例：{-1}\n")
+    record_file.write(f"    - 验证集函数级数据量：{len(validate_dataset)}\n")
+    record_file.write(f"    - 验证集函数级正样本比例：{validate_dataset}\n")
 
     record_file.write(f"模型配置如下：\n")
     record_file.write(f"    - EPOCHS：{EPOCHS}\n")
@@ -118,6 +120,20 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
 
             y_hat = model(data)
             y = data.y.float()
+
+            # 这里修改的地方是，不再是对所有的结果做损失计算
+            # 我们只考虑数据里被标识为1的语句
+            if HAVE_TO_SAMPLE:
+                sample = data['sample']
+                size = sample.shape[0]
+                indices = []
+                for i in range(size):
+                    if sample[i] == 1:
+                        indices.append(i)
+
+                y_hat = torch.index_select(y_hat, dim=0, index=torch.tensor(indices))
+                y = torch.index_select(y, dim=0, index=torch.tensor(indices))
+
             loss = loss_function(y_hat, y, alpha=ALPHA, gamma=GAMMA, reduction="mean")
 
             optimizer.zero_grad()
@@ -128,7 +144,7 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
             if total_train_step % 1 == 0:
                 print(f"训练次数: {total_train_step}, Loss: {loss.item()}")
 
-            if total_train_step % 50 == 0:
+            if total_train_step % 10 == 0:
                 record_file.write(f"训练次数: {total_train_step}, Loss: {loss.item()}\n")
 
         total_val_loss = 0.0
@@ -152,14 +168,26 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
                     y_hat = y_hat.cuda()
 
                 y = data.y.float()
+
+                if HAVE_TO_SAMPLE:
+                    sample = data['sample']
+                    size = sample.shape[0]
+                    indices = []
+                    for i in range(size):
+                        if sample[i] == 1:
+                            indices.append(i)
+
+                    y_hat = torch.index_select(y_hat, dim=0, index=torch.tensor(indices))
+                    y = torch.index_select(y, dim=0, index=torch.tensor(indices))
+
+                loss = loss_function(y_hat, y, alpha=ALPHA, gamma=GAMMA, reduction="mean")
+                total_val_loss += loss.item()
+
                 y_hat_trans = y_hat.argmax(1)
                 y_trans = y.argmax(1)
 
                 y_hat_total = torch.cat([y_hat_total, y_hat_trans])
                 y_total = torch.cat([y_total, y_trans])
-
-                loss = loss_function(y_hat, y, alpha=ALPHA, gamma=GAMMA, reduction='mean')
-                total_val_loss += loss.item()
 
         print(f"验证集整体Loss: {total_val_loss}")
         record_file.write(f"验证集整体Loss: {total_val_loss}\n")
@@ -169,18 +197,21 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
         ps = precision_score(y_total.cpu(), y_hat_total.cpu())
         rc = recall_score(y_total.cpu(), y_hat_total.cpu())
         f1 = f1_score(y_total.cpu(), y_hat_total.cpu())
+        c = confusion_matrix(y_total.cpu(), y_hat_total.cpu(), labels=[0, 1])
 
         print(f"验证集 accuracy_score: {float_to_percent(acc)}")
         print(f"验证集 balanced_accuracy_score: {float_to_percent(balanced_acc)}")
         print(f"验证集 precision_score: {float_to_percent(ps)}")
         print(f"验证集 recall_score: {float_to_percent(rc)}")
         print(f"验证集 f1_score: {float_to_percent(f1)}")
+        print(f"验证集 混淆矩阵:\n {c}")
 
         record_file.write(f"验证集 accuracy_score: {float_to_percent(acc)}\n")
         record_file.write(f"验证集 balanced_accuracy_score: {float_to_percent(balanced_acc)}\n")
         record_file.write(f"验证集 precision_score: {float_to_percent(ps)}\n")
         record_file.write(f"验证集 recall_score: {float_to_percent(rc)}\n")
         record_file.write(f"验证集 f1_score: {float_to_percent(f1)}\n")
+        record_file.write(f"验证集 混淆矩阵:\n {c}\n")
 
         # 主要看balanced_accuracy_score
         if balanced_acc > best_acc:
@@ -194,13 +225,11 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
     record_file.write(
         f"——————————只有看到这条语句，并且对应的模型文件也成功保存了，这个日志文件的内容才有效！（不然就是中断了）——————————")
 
-    def save_model(best_model, model_path: str, time_str) -> str:
+    def save_model(best_model, model_path: str, time_str):
         file_name = time_str + '_model@' + float_to_percent(best_acc) + '.pth'
         save_path = os.path.join(model_path, file_name)
 
         torch.save(best_model, save_path)
         print('模型保存成功！')
-        return save_path
 
-    model_file = save_model(best_model, model_path, start_time_str)
-    return model_file
+    return best_model

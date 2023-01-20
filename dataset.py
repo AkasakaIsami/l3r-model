@@ -240,8 +240,6 @@ class SingleProjectDataset(InMemoryDataset):
             train_split_logged = int(ratios[0] / sum(ratios) * n_logged)
             val_split_logged = train_split_logged + int(ratios[1] / sum(ratios) * n_logged)
 
-            # 抽之前先根据日志率排下序 训练集正样本尽量多一些
-            logged_data_dict = logged_data_dict.sort_values('Lrate', ascending=False)
             train_datalist.extend(logged_data_dict[:train_split_logged]['Data'].tolist())
             dev_datalist.extend(logged_data_dict[train_split_logged:val_split_logged]['Data'].tolist())
             test_datalist.extend(logged_data_dict[val_split_logged:]['Data'].tolist())
@@ -323,7 +321,11 @@ class SingleProjectDataset(InMemoryDataset):
             else:
                 y.append([1, 0])
 
-        num_negative = tempLLOC * self.negative_ratio
+        if self.negative_ratio < 0:
+            num_negative = len(indices_all)
+        else:
+            num_negative = tempLLOC * self.negative_ratio
+
         indices_sampled.extend(
             indices_all if len(indices_all) <= num_negative else random.sample(indices_all, num_negative))
 
