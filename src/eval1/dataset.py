@@ -191,7 +191,6 @@ class SingleProjectDataset(InMemoryDataset):
             if graph_data['is_all_negative']:
                 del graph_data['is_all_negative']
                 graph_data = Data.from_dict(graph_data)
-
                 temp_data = [key, graph_data, tempLOC, tempLLOC, tempLLOC / tempLOC]
                 unlogged_data_dict.loc[len(unlogged_data_dict)] = temp_data
 
@@ -253,11 +252,6 @@ class SingleProjectDataset(InMemoryDataset):
             # test集需要统计一下LOC和LLOC
             test_LOC += logged_data_dict[val_split_logged:]['LOC'].sum()
             test_LLOC = logged_data_dict[val_split_logged:]['LLOC'].sum()
-
-            # 因为是根据标签顺序拼接的 所以打乱一下train_datalist 和 dev_datalist
-            # 还打乱个屁！
-            # random.shuffle(train_datalist)
-            # random.shuffle(dev_datalist)
 
             return train_datalist, dev_datalist, test_datalist, test_methods, test_LOC, test_LLOC
 
