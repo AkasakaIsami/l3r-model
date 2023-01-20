@@ -118,6 +118,19 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
 
             y_hat = model(data)
             y = data.y.float()
+
+            # 这里修改的地方是，不再是对所有的结果做损失计算
+            # 我们只考虑数据里被标识为1的语句
+            sample = data['sample']
+            size = sample.shape[0]
+            indices = []
+            for i in range(size):
+                if sample[i] == 1:
+                    indices.append(i)
+
+            y_hat = torch.index_select(y_hat, dim=0, index=torch.tensor(indices))
+            y = torch.index_select(y, dim=0, index=torch.tensor(indices))
+
             loss = loss_function(y_hat, y, alpha=ALPHA, gamma=GAMMA, reduction="mean")
 
             optimizer.zero_grad()
@@ -152,14 +165,26 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str) -> (
                     y_hat = y_hat.cuda()
 
                 y = data.y.float()
-                y_hat_trans = y_hat.argmax(1)
-                y_trans = y.argmax(1)
+
+                sample = data['sample']
+                size = sample.shape[0]
+                indices = []
+                for i in range(size):
+                    if sample[i] == 1:
+                        indices.append(i)
+
+                y_hat_sampled = torch.index_select(y_hat, dim=0, index=torch.tensor(indices))
+                y_sampled = torch.index_select(y, dim=0, index=torch.tensor(indices))
+
+                loss = loss_function(y_hat, y, alpha=ALPHA, gamma=GAMMA, reduction="mean")
+                total_val_loss += loss.item()
+
+                y_hat_trans = y_hat_sampled.argmax(1)
+                y_trans = y_sampled.argmax(1)
 
                 y_hat_total = torch.cat([y_hat_total, y_hat_trans])
                 y_total = torch.cat([y_total, y_trans])
 
-                loss = loss_function(y_hat, y, alpha=ALPHA, gamma=GAMMA, reduction='mean')
-                total_val_loss += loss.item()
 
         print(f"验证集整体Loss: {total_val_loss}")
         record_file.write(f"验证集整体Loss: {total_val_loss}\n")

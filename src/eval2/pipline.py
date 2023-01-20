@@ -106,12 +106,16 @@ class Pipeline:
         :param drop: 要丢掉多少比例不包含日志的函数
         :return: 返回结果
         """
+        cf = configparser.ConfigParser()
+        cf.read('config.ini')
+        negative_ratio = cf.getint('data', 'negativeRatio')
+
         train_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="train",
-                                             methods=methods, ratio=self.ratio, drop=drop)
+                                             methods=methods, ratio=self.ratio, drop=drop,negative_ratio = negative_ratio)
         # 第一次获取的时候就创建好了 所以不用再传了
         validate_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="validate",
-                                                drop=drop)
-        test_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="test", drop=drop)
+                                                drop=drop,negative_ratio = negative_ratio)
+        test_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="test", drop=drop,negative_ratio = negative_ratio)
         print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
         return train_dataset, validate_dataset, test_dataset, train_dataset.processed_paths[5]
 

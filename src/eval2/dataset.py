@@ -1,3 +1,4 @@
+import configparser
 import os.path
 import random
 import time
@@ -16,13 +17,14 @@ from util import cut_word, random_unit, float_to_percent
 class SingleProjectDataset(InMemoryDataset):
 
     def __init__(self, root, transform=None, pre_transform=None, project=None, dataset_type="train",
-                 methods=None, ratio='8:1:1', drop=0):
+                 methods=None, ratio='8:1:1', drop=0, negative_ratio=4):
         self.word2vec = None
         self.embeddings = None
         self.project = project
         self.methods = methods
         self.ratio = ratio
         self.drop = drop
+        self.negative_ratio = negative_ratio
 
         self.LOC = 0
         self.LLOC = 0
@@ -48,17 +50,11 @@ class SingleProjectDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self) -> List[str]:
-        """
-        一份完整的数据集要包括以下5个文件
-            1. 存储指定全负类别函数丢弃率的文件夹 存着训练数据集
-            2. 同上 存着验证数据集
-            3. 同上 存着测试数据集
-            4. 同上 一份记录测试集内所有函数信息的文件
-            5. 同上 一份记录当前数据集的详细配置的txt文件
-        :return:
-        """
-        dir_name = 'abandon@' + float_to_percent(self.drop)
-        processed_train_path = os.path.join(self.project, dir_name, "train_.pt")
+        dir_name_0 = 'abandon@' + float_to_percent(self.drop)
+        dir_name_1 = '1-' + str(self.negative_ratio)
+
+        dir_name = os.path.join(dir_name_0, dir_name_1)
+        processed_train_path = os.path.join(self.project, dir_name, f"train_.pt")
         processed_dev_path = os.path.join(self.project, dir_name, "dev_.pt")
         processed_test_path = os.path.join(self.project, dir_name, "test_.pt")
         processed_test_info = os.path.join(self.project, dir_name, "test_info.pkl")
@@ -130,7 +126,7 @@ class SingleProjectDataset(InMemoryDataset):
             method_graphs = pydot.graph_from_dot_file(method_graph_path)
             method_graph = method_graphs[0]
 
-            tempLOC, tempLLOC, x, cfg_edge_index, dfg_edge_index, y = self.process_method_dot(method_graph)
+            tempLOC, tempLLOC, x, cfg_edge_index, dfg_edge_index, y, sample = self.process_method_dot(method_graph)
             self.LOC = self.LOC + tempLOC
             self.LLOC = self.LLOC + tempLLOC
             is_all_negative = tempLLOC == 0
@@ -154,6 +150,7 @@ class SingleProjectDataset(InMemoryDataset):
 
             graph_data['edge_type'] = edge_type
             graph_data['y'] = y.long()
+            graph_data['sample'] = sample
 
             # 解析所有语句图
             statements_path = os.path.join(path, statement_graphs_file)
@@ -292,7 +289,6 @@ class SingleProjectDataset(InMemoryDataset):
     def process_method_dot(self, graph):
         """
         处理函数的dot，返回当前函数的图结构
-        首个参数意味着这个函数是不是全是负样本函数……也就是说不存在日志语句
 
         :param graph:
         :return:
@@ -309,15 +305,37 @@ class SingleProjectDataset(InMemoryDataset):
         tempLOC = 0
         tempLLOC = 0
         y = []
-        for node in nodes:
+
+        # indices这个变量完成了随机采样
+        # 对于当前带日志的函数
+        # 我们选择一部分负样本语句进行loss计算以实现类别平衡
+        node_num = len(nodes)
+        indices_all = list(range(node_num))
+        indices_sampled = []
+        for i in range(node_num):
+            node = nodes[i]
             tempLOC = tempLOC + 1
             if 'true' in node.get_attributes()['isLogged']:
+                indices_all.remove(i)
+                indices_sampled.append(i)
                 tempLLOC = tempLLOC + 1
                 y.append([0, 1])
             else:
                 y.append([1, 0])
 
+        num_negative = tempLLOC * self.negative_ratio
+        indices_sampled.extend(
+            indices_all if len(indices_all) <= num_negative else random.sample(indices_all, num_negative))
+
+        sample = []
+        for i in range(node_num):
+            if i not in indices_sampled:
+                sample.append([0])
+            else:
+                sample.append([1])
+
         y = torch.as_tensor(y)
+        sample = torch.as_tensor(sample)
 
         edges = graph.get_edge_list()
 
@@ -351,7 +369,7 @@ class SingleProjectDataset(InMemoryDataset):
         cfg_edge_index = torch.cat([edge_0_cfg, edge_1_cfg], dim=0)
         dfg_edge_index = torch.cat([edge_0_dfg, edge_1_dfg], dim=0)
 
-        return tempLOC, tempLLOC, x, cfg_edge_index, dfg_edge_index, y
+        return tempLOC, tempLLOC, x, cfg_edge_index, dfg_edge_index, y, sample
 
     def process_statement_dot(self, graph):
         """
