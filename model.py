@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from torch_geometric.nn import Sequential, GATConv, BatchNorm, MLP, TopKPooling, global_mean_pool, RGCNConv
+from torch_geometric.nn import Sequential, GATConv, BatchNorm, TopKPooling, RGCNConv, Linear, \
+    global_max_pool
 
 
 class StatementClassfier(nn.Module):
@@ -23,25 +24,25 @@ class StatementClassfier(nn.Module):
         self.layer_0 = Sequential('x, edge_index, edge_type', [
             (RGCNConv(in_channels=self.encode_dim, out_channels=self.hidden_dim, num_relations=2, is_sorted=True),
              'x, edge_index,edge_type -> x'),
-            nn.ReLU(),
+            nn.Sigmoid(),
             BatchNorm(self.hidden_dim)
         ])
 
         self.layer_1 = Sequential('x, edge_index, edge_type', [
             (RGCNConv(in_channels=self.hidden_dim, out_channels=self.hidden_dim, num_relations=2, is_sorted=True),
              'x, edge_index,edge_type -> x'),
-            nn.ReLU(),
+            nn.Sigmoid(),
             BatchNorm(self.hidden_dim)
         ])
 
-        self.mlp = nn.Sequential(nn.Linear(self.hidden_dim, self.hidden_dim),
-                                 nn.Tanh(),
-                                 nn.Linear(self.hidden_dim, 2))
+        self.mlp = nn.Sequential(Linear(self.hidden_dim, self.hidden_dim, weight_initializer='kaiming_uniform'),
+                                 nn.Sigmoid(),
+                                 Linear(self.hidden_dim, 2, weight_initializer='kaiming_uniform'))
 
         # 第二个mlp 对于只有一个节点的图那就过个全连接吧- -
-        self.mlp_2 = nn.Sequential(nn.Linear(self.encode_dim, self.hidden_dim),
-                                   nn.Tanh(),
-                                   nn.Linear(self.hidden_dim, 2))
+        self.mlp_2 = nn.Sequential(Linear(self.encode_dim, self.hidden_dim, weight_initializer='kaiming_uniform'),
+                                   nn.Sigmoid(),
+                                   Linear(self.hidden_dim, 2, weight_initializer='kaiming_uniform'))
 
         self.sm = nn.Softmax(dim=1)
 
@@ -80,7 +81,7 @@ class StatementClassfier(nn.Module):
                 ast_x = ast_x_list[j]
                 ast_edge_index = ast_edge_index_list[j]
 
-                statement_vec = self.encoder(ast_x, ast_edge_index)
+                statement_vec = self.encoder(ast_x, ast_edge_index.long())
                 for k in range(self.encode_dim):
                     data[i]['x'][j][k] = statement_vec[0][k]
 
@@ -113,19 +114,20 @@ class StatementEncoder(nn.Module):
         self.layer_0 = Sequential('x, edge_index', [
             (GATConv(in_channels=self.embedding_dim, out_channels=self.embedding_dim, heads=3,
                      dropout=self.dropout), 'x, edge_index -> x'),
-            nn.ReLU(),
+            nn.Sigmoid(),
             BatchNorm(self.embedding_dim * 3)
         ])
+        self.pooling_0 = TopKPooling(self.embedding_dim * 3, ratio=0.5)
         self.layer_1 = Sequential('x, edge_index', [
             (GATConv(in_channels=self.embedding_dim * 3, out_channels=self.embedding_dim, heads=1,
                      dropout=self.dropout), 'x, edge_index -> x'),
-            nn.ReLU(),
+            nn.Sigmoid(),
             BatchNorm(self.embedding_dim)
         ])
 
-        self.mlp = nn.Sequential(nn.Linear(self.embedding_dim, self.hidden_dim),
+        self.mlp = nn.Sequential(Linear(self.embedding_dim, self.hidden_dim, weight_initializer='kaiming_uniform'),
                                  nn.Tanh(),
-                                 nn.Linear(self.hidden_dim, self.encode_dim))
+                                 Linear(self.hidden_dim, self.encode_dim, weight_initializer='kaiming_uniform'))
 
     def forward(self, x, edge_index):
         """
@@ -145,10 +147,14 @@ class StatementEncoder(nn.Module):
             batch = torch.zeros(size, ).long()
             if self.use_gpu:
                 batch = batch.cuda()
-
             h = self.layer_0(x, edge_index)
+
+            h, edge_index, _, batch, _, _ = self.pooling_0(h, edge_index, None, batch)
+            h = h.relu()
+
             h = self.layer_1(h, edge_index)
-            h = global_mean_pool(h, batch)
+
+            h = global_max_pool(h, batch)
             h = h.relu()
             out = self.mlp(h)
         else:
