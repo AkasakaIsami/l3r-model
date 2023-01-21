@@ -1,5 +1,6 @@
 import configparser
 import os.path
+import pickle
 import random
 import time
 from typing import List
@@ -7,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pydot as pydot
 import torch
+from gensim import models
 from gensim.models import Word2Vec
 from torch_geometric.data import InMemoryDataset, Data
 from tqdm import tqdm
@@ -86,6 +88,20 @@ class SingleProjectDataset(InMemoryDataset):
         self.word2vec = word2vec
         self.embeddings = embeddings
 
+        # # 然后导入tfidf权重
+        # info_file_name = self.project + 'tfidf_info.pickle'
+        # tfidf_model_file_name = self.project + '_model.tfidf'
+        #
+        # info_file = os.path.join(self.project_root, self.project, info_file_name)
+        # model_file = os.path.join(self.project_root, self.project, tfidf_model_file_name)
+        #
+        # with open(info_file, 'rb') as file:  # 用with的优点是可以不用写关闭文件操作
+        #     data = pickle.load(file)
+        #     dictionary = data[0]
+        #     name2doc = data[1]
+        #
+        # tfidf = models.TfidfModel.load(model_file)
+
         # 开始根据传入的函数制作数据集
         mbar = tqdm(self.methods,
                     total=len(self.methods),
@@ -106,13 +122,19 @@ class SingleProjectDataset(InMemoryDataset):
             path = os.path.join(project_root, clz, method)
             mbar.set_postfix_str(f"{clz}.{method}")
 
-            files = os.listdir(path)
+            # doc_name = clz + '@' + method
+            # doc_tfidf = tfidf[dictionary.doc2bow(name2doc[doc_name])]
+            # # 这个词里存储了当前函数里所有token的权重值
+            # doc_dict = {}
+            # for id, value in doc_tfidf:
+            #     word = dictionary.get(id)
+            #     doc_dict[word] = value
 
             graph_data = {}
 
+            files = os.listdir(path)
             method_graph_file = None
             statement_graphs_file = None
-
             for file in files:
                 if file == '.DS_Store':
                     continue
@@ -162,8 +184,11 @@ class SingleProjectDataset(InMemoryDataset):
 
             ast_x_list = []
             ast_edge_index_list = []
-            for statement_graph in statement_graphs:
-                ast_x, ast_edge_index = self.process_statement_dot(graph=statement_graph)
+
+            num_statements = len(statement_graphs)
+            for i in range(num_statements):
+                statement_graph = statement_graphs[i]
+                ast_x, ast_edge_index = self.process_statement_dot(graph=statement_graph, weight=None)
                 ast_x_list.append(ast_x)
                 ast_edge_index_list.append(ast_edge_index)
 
@@ -373,11 +398,12 @@ class SingleProjectDataset(InMemoryDataset):
 
         return tempLOC, tempLLOC, x, cfg_edge_index, dfg_edge_index, y, sample
 
-    def process_statement_dot(self, graph):
+    def process_statement_dot(self, graph, weight):
         """
         这个函数返回ST-AST的特征矩阵和邻接矩阵
         特征矩阵需要根据语料库构建……
 
+        :param weight:
         :param graph: ST-AST
         :return: 特征矩阵和邻接矩阵
         """
@@ -392,7 +418,7 @@ class SingleProjectDataset(InMemoryDataset):
             index = [self.word2vec.key_to_index[token] if token in self.word2vec.key_to_index else max_token]
             return self.embeddings[index]
 
-        def tokens_to_embedding(tokens):
+        def tokens_to_embedding(tokens, weight):
             """
             对于多token组合的节点 可以有多种加权求和方式
             这里简单的求平均先
@@ -404,46 +430,76 @@ class SingleProjectDataset(InMemoryDataset):
 
             for token in tokens:
                 token_embedding = torch.from_numpy(word_to_vec(token))
+                if weight is not None:
+                    token_weight = weight[token] if weight.has_key(token) else 0
+                    token_embedding = token_embedding * token_weight
                 result = result + token_embedding
 
             count = len(tokens)
             result = result / count
             return result
 
-        x = []
-        nodes = graph.get_node_list()
-        if len(graph.get_node_list()) > 0 and graph.get_node_list()[-1].get_name() == '"\\n"':
-            nodes = graph.get_node_list()[:-1]
+        cf = configparser.ConfigParser()
+        cf.read('config.ini')
 
-        # 没节点就一个随机的
-        if len(nodes) == 0:
-            return torch.zeros([1, 128]), torch.zeros([2, 0])
+        drop_ast = cf.getboolean('evalConfig', 'dropAST')
 
-        for node in nodes:
+        if drop_ast is not True:
+            x = []
+            nodes = graph.get_node_list()
+            if len(graph.get_node_list()) > 0 and graph.get_node_list()[-1].get_name() == '"\\n"':
+                nodes = graph.get_node_list()[:-1]
+
+            # 没节点就一个随机的
+            if len(nodes) == 0:
+                return torch.zeros([1, 128]), torch.zeros([2, 0])
+
+            for node in nodes:
+                node_str = node.get_attributes()['label']
+                # token 可能是多种形势，要先切分
+                tokens = cut_word(node_str)
+                # 多token可以考虑不同的合并方式
+                node_embedding = tokens_to_embedding(tokens, weight)
+                x.append(node_embedding)
+
+            x = torch.cat(x)
+
+            edges = graph.get_edge_list()
+            edge_0 = []
+            edge_1 = []
+
+            for edge in edges:
+                source = int(edge.get_source()[1:])
+                destination = int(edge.get_destination()[1:])
+                edge_0.append(source)
+                edge_1.append(destination)
+
+            edge_0 = torch.as_tensor(edge_0, dtype=torch.int)
+            edge_1 = torch.as_tensor(edge_1, dtype=torch.int)
+            edge_0 = edge_0.reshape(1, len(edge_0))
+            edge_1 = edge_1.reshape(1, len(edge_1))
+
+            edge_index = torch.cat([edge_0, edge_1], dim=0)
+
+            return x, edge_index
+
+        else:
+            # 需要丢弃AST 我们只对根节点做初始化
+            nodes = graph.get_node_list()
+            if len(graph.get_node_list()) > 0 and graph.get_node_list()[-1].get_name() == '"\\n"':
+                nodes = graph.get_node_list()[:-1]
+
+            # 没节点就一个随机的
+            if len(nodes) == 0:
+                return torch.zeros([1, 128]), torch.zeros([2, 0])
+
+            node = nodes[0]
             node_str = node.get_attributes()['label']
             # token 可能是多种形势，要先切分
             tokens = cut_word(node_str)
             # 多token可以考虑不同的合并方式
-            node_embedding = tokens_to_embedding(tokens)
-            x.append(node_embedding)
+            node_embedding = tokens_to_embedding(tokens, weight)
 
-        x = torch.cat(x)
-
-        edges = graph.get_edge_list()
-        edge_0 = []
-        edge_1 = []
-
-        for edge in edges:
-            source = int(edge.get_source()[1:])
-            destination = int(edge.get_destination()[1:])
-            edge_0.append(source)
-            edge_1.append(destination)
-
-        edge_0 = torch.as_tensor(edge_0, dtype=torch.int)
-        edge_1 = torch.as_tensor(edge_1, dtype=torch.int)
-        edge_0 = edge_0.reshape(1, len(edge_0))
-        edge_1 = edge_1.reshape(1, len(edge_1))
-
-        edge_index = torch.cat([edge_0, edge_1], dim=0)
-
-        return x, edge_index
+            x = node_embedding
+            edge_index = torch.zeros(2, 0).long()
+            return x, edge_index

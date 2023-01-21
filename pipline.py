@@ -1,8 +1,10 @@
 import configparser
 import os
+import pickle
 
 import pandas as pd
 import torch
+from gensim import corpora, models
 from pandas import Series
 
 from dataset import SingleProjectDataset
@@ -37,30 +39,65 @@ class Pipeline:
 
     def dictionary_and_embedding(self, project, embedding_size):
         """
-        construct dictionary and train word embedding
-
         :param project: 输入要计算embedding的项目
         :param train_data: 基于训练集构建语料库（懒得写了 暂时先用整个项目做语料库吧）
         :param embedding_size: 要训练的词嵌入大小
         """
-        self.embedding_size = embedding_size
-        # 创建过就不要训练了
-        corpus_file_path = os.path.join(self.src_path, project, project + '_corpus.txt')
-        model_file_name = project + "_w2v_" + str(embedding_size) + '.model'
 
-        if os.path.exists(os.path.join(self.src_path, project, model_file_name)):
-            return
+        def build_w2v_model(project, embedding_size):
+            self.embedding_size = embedding_size
+            # 创建过就不要训练了
+            corpus_file_path = os.path.join(self.src_path, project, project + '_corpus.txt')
+            model_file_name = project + "_w2v_" + str(embedding_size) + '.model'
 
-        from gensim.models import word2vec
+            save_path = os.path.join(self.src_path, project, model_file_name)
+            if os.path.exists(save_path):
+                return
 
-        corpus = word2vec.LineSentence(corpus_file_path)
-        w2v = word2vec.Word2Vec(corpus, vector_size=embedding_size, workers=16, sg=1, min_count=3)
+            from gensim.models import word2vec
 
-        model_file_name = project + "_w2v_" + str(embedding_size) + '.model'
-
-        save_path = os.path.join(self.src_path, project, model_file_name)
-        if not os.path.exists(save_path):
+            corpus = word2vec.LineSentence(corpus_file_path)
+            w2v = word2vec.Word2Vec(corpus, vector_size=embedding_size, workers=16, sg=1, min_count=3)
             w2v.save(save_path)
+
+        def build_tfidf_model(project):
+            docs = []
+            # 每个函数和他对应的文档
+            # 后面读的时候需要用到他来构建词袋
+            name2doc = {}
+            corpus_tfidf_file_path = os.path.join(self.src_path, project, project + '_corpus_tfidf.txt')
+
+            info_file_name = project + 'tfidf_info.pickle'
+            tfidf_model_file_name = project + '_model.tfidf'
+
+            save_path_info = os.path.join(self.src_path, project, info_file_name)
+            save_path_model = os.path.join(self.src_path, project, tfidf_model_file_name)
+
+            if os.path.exists(save_path_info) and os.path.exists(save_path_model):
+                return
+
+            with open(corpus_tfidf_file_path, 'r') as file:
+                for line in file.readlines():
+                    line = line.strip().split(' ')
+
+                    method_name = line[0]
+                    method_doc = line[1:]
+
+                    name2doc[method_name] = method_doc
+                    docs.append(method_doc)
+
+            # 词典 为语料库中每个单词都赋予一个索引
+            dictionary = corpora.Dictionary(docs)
+            new_corpus = [dictionary.doc2bow(doc) for doc in docs]
+            tfidf = models.TfidfModel(new_corpus)
+            tfidf.save(save_path_model)
+
+            # 还要保存dictionary和name2doc
+            with open(save_path_info, 'wb') as file:
+                pickle.dump((dictionary, name2doc), file)
+
+        build_w2v_model(project, embedding_size)
+        # build_tfidf_model(project)
 
     def get_data(self) -> Series:
         """
@@ -138,7 +175,7 @@ class Pipeline:
         # 后面的函数不要了 这里只制作数据集 不训练模型
         print('开始训练...')
         model = train(train_dataset, validate_dataset, os.path.join(self.root, 'model', self.project),
-                           dataset_info)
+                      dataset_info)
 
         print('开始测试...')
         # model_file要指定完整路径
