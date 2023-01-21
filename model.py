@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch_geometric.nn import Sequential, GATConv, BatchNorm, TopKPooling, RGCNConv, Linear, \
-    global_max_pool
+    global_max_pool, RGATConv
 
 
 class StatementClassfier(nn.Module):
@@ -32,6 +32,25 @@ class StatementClassfier(nn.Module):
             (RGCNConv(in_channels=self.hidden_dim, out_channels=self.hidden_dim, num_relations=2, is_sorted=True),
              'x, edge_index,edge_type -> x'),
             nn.Sigmoid(),
+            BatchNorm(self.hidden_dim)
+        ])
+
+        self.conv_0 = Sequential('x, edge_index, edge_type', [
+            (RGATConv(self.encode_dim, self.hidden_dim, num_relations=2),
+             'x, edge_index,edge_type -> x'),
+            nn.ReLU(),
+            BatchNorm(self.hidden_dim)
+        ])
+        self.conv_2 = Sequential('x, edge_index, edge_type', [
+            (RGATConv(self.hidden_dim, self.hidden_dim, num_relations=2),
+             'x, edge_index,edge_type -> x'),
+            nn.ReLU(),
+            BatchNorm(self.hidden_dim)
+        ])
+        self.conv_3 = Sequential('x, edge_index, edge_type', [
+            (RGATConv(self.hidden_dim, self.hidden_dim, num_relations=2),
+             'x, edge_index,edge_type -> x'),
+            nn.ReLU(),
             BatchNorm(self.hidden_dim)
         ])
 
@@ -90,8 +109,11 @@ class StatementClassfier(nn.Module):
         edge_index = data.edge_index
         edge_type = data.edge_type
         if x.shape[0] > 1:
-            h = self.layer_0(x, edge_index, edge_type)
-            h = self.layer_1(h, edge_index, edge_type)
+            # h = self.layer_0(x, edge_index, edge_type)
+            # h = self.layer_1(h, edge_index, edge_type)
+            h = self.conv_0(x, edge_index, edge_type)
+            h = self.conv_2(h, edge_index, edge_type)
+            h = self.conv_3(h, edge_index, edge_type)
             out = self.mlp(h)
         else:
             out = self.mlp_2(x)
