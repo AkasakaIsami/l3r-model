@@ -107,24 +107,20 @@ class StatementEncoder(nn.Module):
         self.use_gpu = use_gpu
         self.dropout = dropout
 
-        # 网络结构定义
-        # 还是用GNN
-        # 用两层GAT
-        # 池化暂时先用最简单的gmp看看效果 之后可以改成 TopKPooling/MaxPooling
         self.layer_0 = Sequential('x, edge_index', [
             (GATConv(in_channels=self.embedding_dim, out_channels=self.embedding_dim, heads=3,
                      dropout=self.dropout), 'x, edge_index -> x'),
-            nn.Sigmoid(),
+            nn.Tanh(),
             BatchNorm(self.embedding_dim * 3)
         ])
-        self.pooling_0 = TopKPooling(self.embedding_dim * 3, ratio=0.5)
+        self.pooling_0 = TopKPooling(self.embedding_dim * 3, ratio=0.7)
         self.layer_1 = Sequential('x, edge_index', [
             (GATConv(in_channels=self.embedding_dim * 3, out_channels=self.embedding_dim, heads=1,
                      dropout=self.dropout), 'x, edge_index -> x'),
-            nn.Sigmoid(),
+            nn.Tanh(),
             BatchNorm(self.embedding_dim)
         ])
-
+        self.pooling_1 = TopKPooling(self.embedding_dim, ratio=0.5)
         self.mlp = nn.Sequential(Linear(self.embedding_dim, self.hidden_dim, weight_initializer='kaiming_uniform'),
                                  nn.Tanh(),
                                  Linear(self.hidden_dim, self.encode_dim, weight_initializer='kaiming_uniform'))
@@ -148,12 +144,10 @@ class StatementEncoder(nn.Module):
             if self.use_gpu:
                 batch = batch.cuda()
             h = self.layer_0(x, edge_index)
-
             h, edge_index, _, batch, _, _ = self.pooling_0(h, edge_index, None, batch)
             h = h.relu()
-
             h = self.layer_1(h, edge_index)
-
+            h, edge_index, _, batch, _, _ = self.pooling_1(h, edge_index, None, batch)
             h = global_max_pool(h, batch)
             h = h.relu()
             out = self.mlp(h)
