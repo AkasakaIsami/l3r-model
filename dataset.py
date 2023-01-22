@@ -19,7 +19,7 @@ from util import cut_word, random_unit, float_to_percent
 class SingleProjectDataset(InMemoryDataset):
 
     def __init__(self, root, transform=None, pre_transform=None, project=None, dataset_type="train",
-                 methods=None, ratio='8:1:1', drop=0, negative_ratio=4):
+                 methods=None, ratio='8:1:1', drop=0, negative_ratio=4, drop_ast=0):
         self.word2vec = None
         self.embeddings = None
         self.project = project
@@ -30,6 +30,8 @@ class SingleProjectDataset(InMemoryDataset):
 
         self.LOC = 0
         self.LLOC = 0
+
+        self.drop_ast = drop_ast == 1
 
         super(SingleProjectDataset, self).__init__(root, transform, pre_transform)
 
@@ -54,6 +56,8 @@ class SingleProjectDataset(InMemoryDataset):
     def processed_file_names(self) -> List[str]:
         dir_name_0 = 'abandon@' + float_to_percent(self.drop)
         dir_name_1 = '1-' + str(self.negative_ratio)
+        if self.drop_ast:
+            dir_name_1 += '-dropAST'
 
         dir_name = os.path.join(dir_name_0, dir_name_1)
         processed_train_path = os.path.join(self.project, dir_name, f"train_.pt")
@@ -311,6 +315,7 @@ class SingleProjectDataset(InMemoryDataset):
         record_file.write(
             f"测试集中共语句{test_LOC}个，其中正样本语句{test_LLOC}个，语句日志率{float_to_percent(test_LLOC / test_LOC)}")
         save_data(train_datalist, dev_datalist, test_datalist, test_methods)
+        record_file.close()
 
     def process_method_dot(self, graph):
         """
@@ -448,12 +453,7 @@ class SingleProjectDataset(InMemoryDataset):
             result = result / count
             return result
 
-        cf = configparser.ConfigParser()
-        cf.read('config.ini')
-
-        drop_ast = cf.getboolean('evalConfig', 'dropAST')
-
-        if drop_ast is not True:
+        if self.drop_ast is not True:
             x = []
             nodes = graph.get_node_list()
             if len(graph.get_node_list()) > 0 and graph.get_node_list()[-1].get_name() == '"\\n"':

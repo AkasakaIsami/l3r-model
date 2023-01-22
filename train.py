@@ -59,7 +59,7 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
     start_time_str = datetime.strftime(start_time, '%Y-%m-%d_%H:%M:%S')
 
     # 定义日志保存文件
-    record_file_name = start_time_str + 'train_info_' + '.txt'
+    record_file_name = start_time_str + '_train_info_' + '.txt'
     record_file = open(os.path.join(model_path, record_file_name), 'w')
     record_file.write(f"本次实验开始时间：{start_time_str}\n")
 
@@ -80,7 +80,7 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
     record_file.write(f"    - dropout率：{DROP}\n")
 
     # 正式开始训练！
-    train_loader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    train_loader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=False)
     dev_loader = DataLoader(dataset=validate_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     # 训练的配置
@@ -126,8 +126,6 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
             y_hat = model(data)
             y = data.y.float()
 
-            # 这里修改的地方是，不再是对所有的结果做损失计算
-            # 我们只考虑数据里被标识为1的语句
             if HAVE_TO_SAMPLE:
                 sample = data['sample']
                 size = sample.shape[0]
@@ -213,7 +211,6 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
                         elif fac == 0.0 and pre == 1.0:
                             FP.append(full_name)
 
-
         print(f"验证集整体Loss: {total_val_loss}")
         record_file.write(f"验证集整体Loss: {total_val_loss}\n")
 
@@ -230,6 +227,7 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
         print(f"验证集 recall_score: {float_to_percent(rc)}")
         print(f"验证集 f1_score: {float_to_percent(f1)}")
         print(f"验证集 混淆矩阵:\n {c}")
+        print(f"TN和FP请到{os.path.join(model_path, record_file_name)}里查看")
 
         record_file.write(f"验证集 accuracy_score: {float_to_percent(acc)}\n")
         record_file.write(f"验证集 balanced_accuracy_score: {float_to_percent(balanced_acc)}\n")
@@ -239,18 +237,14 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
         record_file.write(f"验证集 混淆矩阵:\n {c}\n")
 
         index = 0
-        print("实际是正样本，却被预测为负样本的TN有：")
         record_file.write("实际是正样本，却被预测为负样本的TN有：\n")
         for item in TN:
-            print(f'    -{index}. {item}')
             record_file.write(f'    -{index}. {item}\n')
             index += 1
 
         index = 0
-        print("实际是负样本，被预测为正样本的FP有：")
         record_file.write("实际是负样本，被预测为正样本的FP有：\n")
         for item in FP:
-            print(f'    -{index}. {item}')
             record_file.write(f'    -{index}. {item}\n')
             index += 1
 
@@ -264,7 +258,7 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
     print(f"训练完成，共耗时{end - start}秒。最佳balanced accuracy是{float_to_percent(best_acc)}。现在开始保存数据...")
     record_file.write(f"训练完成，共耗时{end - start}秒。最佳balanced accuracy是{best_acc}\n")
     record_file.write(
-        f"——————————只有看到这条语句，并且对应的模型文件也成功保存了，这个日志文件的内容才有效！（不然就是中断了）——————————")
+        f"——————————只有看到这条语句，并且对应的模型文件也成功保存了，这个日志文件的内容才有效！（不然就是中断了）——————————\n")
     record_file.close()
 
     def save_model(best_model, model_path: str, time_str):
@@ -274,5 +268,5 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
         torch.save(best_model, save_path)
         print('模型保存成功！')
 
-    save_model(best_model, model_path, record_file_name)
-    return best_model
+    save_model(best_model, model_path, start_time_str)
+    return best_model, os.path.join(model_path, record_file_name)

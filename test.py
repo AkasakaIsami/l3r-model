@@ -1,4 +1,5 @@
 import configparser
+import os
 
 import torch
 from torch_geometric.loader import DataLoader
@@ -11,7 +12,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def test(model, test_dataset):
+def test(model, test_dataset, record_file_path: str):
     """
     有几个指标
         1. Accuracy 准确率
@@ -19,12 +20,11 @@ def test(model, test_dataset):
         3. Precision
         4. Recall
         5. F1
-
-
     :param model_path: 用于测试的模型
     :param test_dataset: 用于测试的测试集
     :return:
     """
+    record_file = open(os.path.join(record_file_path), 'a')
 
     cf = configparser.ConfigParser()
     cf.read('config.ini')
@@ -49,6 +49,8 @@ def test(model, test_dataset):
                 y_hat = y_hat.cpu()
 
             y = data.y
+            if USE_GPU:
+                y = y.cpu()
 
             if HAVE_TO_SAMPLE:
                 sample = data['sample']
@@ -60,9 +62,6 @@ def test(model, test_dataset):
 
                 y_hat = torch.index_select(y_hat, dim=0, index=torch.tensor(indices))
                 y = torch.index_select(y, dim=0, index=torch.tensor(indices))
-
-            if USE_GPU:
-                y = y.cpu()
 
             y_hat_trans = y_hat.argmax(1)
             y_trans = y.argmax(1)
@@ -85,3 +84,12 @@ def test(model, test_dataset):
     print(f"测试集 f1_score: {float_to_percent(f1)}")
     print(f"测试集 混淆矩阵:\n {c}")
 
+    record_file.write("下面是测试集结果：\n")
+    record_file.write(f"测试集 accuracy_score: {float_to_percent(acc)}\n")
+    record_file.write(f"测试集 balanced_accuracy_score: {float_to_percent(balanced_acc)}\n")
+    record_file.write(f"测试集 precision_score: {float_to_percent(ps)}\n")
+    record_file.write(f"测试集 recall_score: {float_to_percent(rc)}\n")
+    record_file.write(f"测试集 f1_score: {float_to_percent(f1)}\n")
+    record_file.write(f"测试集 混淆矩阵:\n {c}")
+
+    record_file.close()

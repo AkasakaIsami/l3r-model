@@ -11,12 +11,6 @@ from dataset import SingleProjectDataset
 from test import test
 from train import train
 
-'''
-因为数据集构建的逻辑要重构 
-不想覆盖原来的代码
-所以直接重写一遍
-'''
-
 
 class Pipeline:
 
@@ -145,17 +139,20 @@ class Pipeline:
         """
         cf = configparser.ConfigParser()
         cf.read('config.ini')
+
         negative_ratio = cf.getint('data', 'negativeRatio')
         drop = cf.getfloat('data', 'drop')
 
+        drop_ast = cf.getint('evalConfig', 'dropAST')
+
         train_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="train",
                                              methods=methods, ratio=self.ratio, drop=drop,
-                                             negative_ratio=negative_ratio)
+                                             negative_ratio=negative_ratio, drop_ast=drop_ast)
         # 第一次获取的时候就创建好了 所以不用再传了
         validate_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="validate",
-                                                drop=drop, negative_ratio=negative_ratio)
+                                                drop=drop, negative_ratio=negative_ratio, drop_ast=drop_ast)
         test_dataset = SingleProjectDataset(root=self.root, project=self.project, dataset_type="test", drop=drop,
-                                            negative_ratio=negative_ratio)
+                                            negative_ratio=negative_ratio, drop_ast=drop_ast)
         print(f"{len(train_dataset)=} {len(validate_dataset)=} {len(test_dataset)=}")
         return train_dataset, validate_dataset, test_dataset, train_dataset.processed_paths[5]
 
@@ -174,14 +171,11 @@ class Pipeline:
 
         # 后面的函数不要了 这里只制作数据集 不训练模型
         print('开始训练...')
-        model = train(train_dataset, validate_dataset, os.path.join(self.root, 'model', self.project),
-                      dataset_info)
+        model, record_file_path = train(train_dataset, validate_dataset, os.path.join(self.root, 'model', self.project),
+                                        dataset_info)
 
         print('开始测试...')
-        # model_file要指定完整路径
-
-        # model_file = ''
-        test(model, test_dataset)
+        test(model, test_dataset, record_file_path)
 
 
 if __name__ == '__main__':
