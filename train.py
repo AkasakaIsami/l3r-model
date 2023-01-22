@@ -10,7 +10,7 @@ from torch_geometric.loader import DataLoader
 from torchinfo import summary
 from torchvision.ops import sigmoid_focal_loss
 
-from model import StatementClassfier
+from model import StatementClassifier
 from util import float_to_percent
 
 import warnings
@@ -84,9 +84,9 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
     dev_loader = DataLoader(dataset=validate_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     # 训练的配置
-    model = StatementClassfier(encode_dim=ENCODE_DIM, hidden_dim=HIDDEN_DIM, encoder_num_layers=ENCODE_DIM,
-                               classifier_num_layers=C_NUM_LAYERS, dropout=DROP,
-                               use_gpu=USE_GPU)
+    model = StatementClassifier(encode_dim=ENCODE_DIM, hidden_dim=HIDDEN_DIM, encoder_num_layers=ENCODE_DIM,
+                                classifier_num_layers=C_NUM_LAYERS, dropout=DROP,
+                                use_gpu=USE_GPU)
     parameters = model.parameters()
     optimizer = torch.optim.Adam(parameters, lr=LR)
     loss_function = sigmoid_focal_loss
@@ -118,9 +118,10 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
         temp_data = validate_dataset[i]
         method_name = temp_data.id
 
-        x_size = temp_data.x.shape[0]
+        lines = temp_data.lines
+        x_size = temp_data.lines.shape[0]
         for j in range(x_size):
-            ids.append(method_name + '@' + str(j))
+            ids.append(method_name + '@' + str(lines[j].item()))
 
     start = time.time()
     record_file.write(f"开始训练！\n")
@@ -241,19 +242,17 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
                     FP.append(ids[i])
 
         index = 0
+        print("实际是正样本，却被预测为负样本的TN有：")
+        record_file.write("实际是正样本，却被预测为负样本的TN有：\n")
         for item in TN:
-            print("实际是正样本，却被预测为负样本的TN有：")
-            record_file.write("实际是正样本，却被预测为负样本的TN有：\n")
-
             print(f'    -{index}. {item}')
             record_file.write(f'    -{index}. {item}\n')
             index += 1
 
         index = 0
+        print("实际是负样本，被预测为正样本的FP有：")
+        record_file.write("实际是负样本，被预测为正样本的FP有：\n")
         for item in FP:
-            print("实际是负样本，被预测为正样本的FP有：")
-            record_file.write("实际是负样本，被预测为正样本的FP有：\n")
-
             print(f'    -{index}. {item}')
             record_file.write(f'    -{index}. {item}\n')
             index += 1

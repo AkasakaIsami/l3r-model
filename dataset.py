@@ -148,7 +148,8 @@ class SingleProjectDataset(InMemoryDataset):
             method_graphs = pydot.graph_from_dot_file(method_graph_path)
             method_graph = method_graphs[0]
 
-            tempLOC, tempLLOC, x, cfg_edge_index, dfg_edge_index, y, sample = self.process_method_dot(method_graph)
+            tempLOC, tempLLOC, x, cfg_edge_index, dfg_edge_index, y, sample, lines = self.process_method_dot(
+                method_graph)
             self.LOC = self.LOC + tempLOC
             self.LLOC = self.LLOC + tempLLOC
             is_all_negative = tempLLOC == 0
@@ -163,6 +164,7 @@ class SingleProjectDataset(InMemoryDataset):
 
             graph_data['x'] = x
             graph_data['edge_index'] = torch.cat([cfg_edge_index, dfg_edge_index], 1).long()
+            graph_data['lines'] = lines
 
             len_1 = cfg_edge_index.shape[1]
             len_2 = dfg_edge_index.shape[1]
@@ -321,14 +323,14 @@ class SingleProjectDataset(InMemoryDataset):
         if len(graph.get_node_list()) > 0 and graph.get_node_list()[-1].get_name() == '"\\n"':
             nodes = graph.get_node_list()[:-1]
         node_num = len(nodes)
-
-        # 初始化特征为128维的空向量
-        # x: n * 128
         x = torch.zeros([node_num, 128], dtype=torch.float)
 
         tempLOC = 0
         tempLLOC = 0
         y = []
+
+        # 存了每个语句的行数 数量和节点数量对应
+        lines = []
 
         # indices这个变量完成了随机采样
         # 对于当前带日志的函数
@@ -336,8 +338,13 @@ class SingleProjectDataset(InMemoryDataset):
         node_num = len(nodes)
         indices_all = list(range(node_num))
         indices_sampled = []
+
         for i in range(node_num):
             node = nodes[i]
+
+            line = node.get_attributes()['line']
+            lines.append([int(line)])
+
             tempLOC = tempLOC + 1
             if 'true' in node.get_attributes()['isLogged']:
                 indices_all.remove(i)
@@ -364,6 +371,7 @@ class SingleProjectDataset(InMemoryDataset):
 
         y = torch.as_tensor(y)
         sample = torch.as_tensor(sample)
+        lines = torch.as_tensor(lines)
 
         edges = graph.get_edge_list()
 
@@ -397,7 +405,7 @@ class SingleProjectDataset(InMemoryDataset):
         cfg_edge_index = torch.cat([edge_0_cfg, edge_1_cfg], dim=0)
         dfg_edge_index = torch.cat([edge_0_dfg, edge_1_dfg], dim=0)
 
-        return tempLOC, tempLLOC, x, cfg_edge_index, dfg_edge_index, y, sample
+        return tempLOC, tempLLOC, x, cfg_edge_index, dfg_edge_index, y, sample, lines
 
     def process_statement_dot(self, graph, weight):
         """
