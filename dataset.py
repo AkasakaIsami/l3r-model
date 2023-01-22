@@ -210,6 +210,7 @@ class SingleProjectDataset(InMemoryDataset):
             graph_data['ast_edge_index_matrix'] = ast_edge_index_matrix
 
             key = clz + '@' + method
+            graph_data['id'] = key
             if graph_data['is_all_negative']:
                 del graph_data['is_all_negative']
                 graph_data = Data.from_dict(graph_data)

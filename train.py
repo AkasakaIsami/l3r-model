@@ -81,7 +81,7 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
 
     # 正式开始训练！
     train_loader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    dev_loader = DataLoader(dataset=validate_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    dev_loader = DataLoader(dataset=validate_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     # 训练的配置
     model = StatementClassfier(encode_dim=ENCODE_DIM, hidden_dim=HIDDEN_DIM, encoder_num_layers=ENCODE_DIM,
@@ -106,6 +106,21 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
 
     # 控制日志打印的一些参数
     total_train_step = 0
+
+    # 开始训练前 我们要先对验证集做一遍遍历
+    # 因为要看验证集里哪些被预测错误了
+    # 所以先建立一个列表 和验证集里的所有数据对应
+    # 到最后直接根据y_hat_total和y_total来看哪部分出问题
+
+    ids = []
+    val_len = len(validate_dataset)
+    for i in range(val_len):
+        temp_data = validate_dataset[i]
+        method_name = temp_data.id
+
+        x_size = temp_data.x.shape[0]
+        for j in range(x_size):
+            ids.append(method_name + '@' + str(j))
 
     start = time.time()
     record_file.write(f"开始训练！\n")
@@ -181,11 +196,11 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
                     y = torch.index_select(y, dim=0, index=torch.tensor(indices))
 
                 loss = loss_function(y_hat, y, alpha=ALPHA, gamma=GAMMA, reduction="mean")
-                total_val_loss += loss.item()
 
+                # 用来计算整体指标
+                total_val_loss += loss.item()
                 y_hat_trans = y_hat.argmax(1)
                 y_trans = y.argmax(1)
-
                 y_hat_total = torch.cat([y_hat_total, y_hat_trans])
                 y_total = torch.cat([y_total, y_trans])
 
@@ -213,6 +228,36 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
         record_file.write(f"验证集 f1_score: {float_to_percent(f1)}\n")
         record_file.write(f"验证集 混淆矩阵:\n {c}\n")
 
+        # 这里记录一下TN和FP
+        TN = []
+        FP = []
+        for i in range(y_total.shape[0]):
+            fac = y_total[i].item()
+            pre = y_hat_total[i].item()
+            if fac != pre:
+                if fac == 1.0 and pre == 0.0:
+                    TN.append(ids[i])
+                elif fac == 0.0 and pre == 1.0:
+                    FP.append(ids[i])
+
+        index = 0
+        for item in TN:
+            print("实际是正样本，却被预测为负样本的TN有：")
+            record_file.write("实际是正样本，却被预测为负样本的TN有：\n")
+
+            print(f'    -{index}. {item}')
+            record_file.write(f'    -{index}. {item}\n')
+            index += 1
+
+        index = 0
+        for item in FP:
+            print("实际是负样本，被预测为正样本的FP有：")
+            record_file.write("实际是负样本，被预测为正样本的FP有：\n")
+
+            print(f'    -{index}. {item}')
+            record_file.write(f'    -{index}. {item}\n')
+            index += 1
+
         # 主要看balanced_accuracy_score
         if balanced_acc > best_acc:
             record_file.write(f"***当前模型的平衡准确率表现最好，被记为表现最好的模型***\n")
@@ -224,6 +269,7 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
     record_file.write(f"训练完成，共耗时{end - start}秒。最佳balanced accuracy是{best_acc}\n")
     record_file.write(
         f"——————————只有看到这条语句，并且对应的模型文件也成功保存了，这个日志文件的内容才有效！（不然就是中断了）——————————")
+    record_file.close()
 
     def save_model(best_model, model_path: str, time_str):
         file_name = time_str + '_model@' + float_to_percent(best_acc) + '.pth'
@@ -232,4 +278,5 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
         torch.save(best_model, save_path)
         print('模型保存成功！')
 
+    save_model(best_model, model_path, record_file_name)
     return best_model
