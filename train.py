@@ -112,17 +112,6 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
     # 所以先建立一个列表 和验证集里的所有数据对应
     # 到最后直接根据y_hat_total和y_total来看哪部分出问题
 
-    ids = []
-    val_len = len(validate_dataset)
-    for i in range(val_len):
-        temp_data = validate_dataset[i]
-        method_name = temp_data.id
-
-        lines = temp_data.lines
-        x_size = temp_data.lines.shape[0]
-        for j in range(x_size):
-            ids.append(method_name + '@' + str(lines[j].item()))
-
     start = time.time()
     record_file.write(f"开始训练！\n")
     for epoch in range(EPOCHS):
@@ -173,6 +162,8 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
             y_total = y_total.cuda()
 
         model.eval()
+        TN = []
+        FP = []
         with torch.no_grad():
             for i, data in enumerate(dev_loader):
                 if USE_GPU:
@@ -185,6 +176,8 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
 
                 y = data.y.float()
 
+                lines = data.lines
+                batch_for_name = data.batch
                 if HAVE_TO_SAMPLE:
                     sample = data['sample']
                     size = sample.shape[0]
@@ -195,6 +188,8 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
 
                     y_hat = torch.index_select(y_hat, dim=0, index=torch.tensor(indices))
                     y = torch.index_select(y, dim=0, index=torch.tensor(indices))
+                    lines = torch.index_select(data.lines, dim=0, index=torch.tensor(indices))
+                    batch_for_name = torch.index_select(data.batch, dim=0, index=torch.tensor(indices))
 
                 loss = loss_function(y_hat, y, alpha=ALPHA, gamma=GAMMA, reduction="mean")
 
@@ -204,6 +199,20 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
                 y_trans = y.argmax(1)
                 y_hat_total = torch.cat([y_hat_total, y_hat_trans])
                 y_total = torch.cat([y_total, y_trans])
+
+                # 用来计算当前batch的TN和FP
+                for j in range(y_hat.shape[0]):
+                    fac = y_trans[j].item()
+                    pre = y_hat_trans[j].item()
+                    if fac != pre:
+                        method_name = data[batch_for_name[j].item()].id
+                        line = lines[j].item()
+                        full_name = method_name + '@' + str(line)
+                        if fac == 1.0 and pre == 0.0:
+                            TN.append(full_name)
+                        elif fac == 0.0 and pre == 1.0:
+                            FP.append(full_name)
+
 
         print(f"验证集整体Loss: {total_val_loss}")
         record_file.write(f"验证集整体Loss: {total_val_loss}\n")
@@ -228,18 +237,6 @@ def train(train_dataset, validate_dataset, model_path: str, data_info: str):
         record_file.write(f"验证集 recall_score: {float_to_percent(rc)}\n")
         record_file.write(f"验证集 f1_score: {float_to_percent(f1)}\n")
         record_file.write(f"验证集 混淆矩阵:\n {c}\n")
-
-        # 这里记录一下TN和FP
-        TN = []
-        FP = []
-        for i in range(y_total.shape[0]):
-            fac = y_total[i].item()
-            pre = y_hat_total[i].item()
-            if fac != pre:
-                if fac == 1.0 and pre == 0.0:
-                    TN.append(ids[i])
-                elif fac == 0.0 and pre == 1.0:
-                    FP.append(ids[i])
 
         index = 0
         print("实际是正样本，却被预测为负样本的TN有：")
